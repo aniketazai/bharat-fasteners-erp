@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"User\"\\); node -v; npm -v)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"User\"\\); Set-Location \"c:\\\\Users\\\\DELL\\\\bharat-fasteners-erp\"; npm install)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\", \"User\"\\); Set-Location \"c:\\\\Users\\\\DELL\\\\bharat-fasteners-erp\"; npm run dev)",
+      "PowerShell(Copy-Item \"c:\\\\Users\\\\DELL\\\\bharat-fasteners-erp\\\\.env.example\" \"c:\\\\Users\\\\DELL\\\\bharat-fasteners-erp\\\\.env\")"
+    ]
+  }
+}
