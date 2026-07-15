@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 
 const GRADES = ['Grade-1', 'Grade-2', 'Grade-3', 'Grade-4', 'Grade-5', 'Grade-6']
-const EMPTY_FORM = { diameter_mm: '', grade: 'Grade-1' }
+const EMPTY_FORM = { diameter_mm: '', grade: 'Grade-1', min_stock_kg: '50' }
 
 function wireLabel(r) {
   return `${r.diameter_mm}mm – ${r.grade}`
@@ -52,9 +52,10 @@ export default function RMWire() {
 
     setSaving(true)
     const { error } = await supabase.from('rm_wire_master').insert({
-      diameter_mm: d,
-      grade:       form.grade,
-      created_by:  user?.id,
+      diameter_mm:  d,
+      grade:        form.grade,
+      min_stock_kg: parseFloat(form.min_stock_kg) || 50,
+      created_by:   user?.id,
     })
     setSaving(false)
     if (error) { setFormErrors({ diameter_mm: error.message }); return }
@@ -65,7 +66,7 @@ export default function RMWire() {
 
   function startEdit(row) {
     setEditId(row.id)
-    setEditData({ diameter_mm: String(row.diameter_mm), grade: row.grade })
+    setEditData({ diameter_mm: String(row.diameter_mm), grade: row.grade, min_stock_kg: String(row.min_stock_kg ?? 50) })
     setEditErrors({})
   }
 
@@ -77,8 +78,9 @@ export default function RMWire() {
     if (Object.keys(errs).length) { setEditErrors(errs); return }
 
     const { error } = await supabase.from('rm_wire_master').update({
-      diameter_mm: d,
-      grade:       editData.grade,
+      diameter_mm:  d,
+      grade:        editData.grade,
+      min_stock_kg: parseFloat(editData.min_stock_kg) || 50,
     }).eq('id', id)
     if (error) { setEditErrors({ diameter_mm: error.message }); return }
     setEditId(null)
@@ -133,7 +135,7 @@ export default function RMWire() {
             Unique constraint: diameter + grade combination must be unique.
           </p>
           <form onSubmit={handleAdd}>
-            <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)' }}>
+            <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
               <div className="form-group">
                 <label>Diameter (mm) *</label>
                 <input
@@ -158,9 +160,20 @@ export default function RMWire() {
                   {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
+              <div className="form-group">
+                <label>Min Stock (kg)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={form.min_stock_kg}
+                  onChange={e => setForm(f => ({ ...f, min_stock_kg: e.target.value }))}
+                  placeholder="50"
+                />
+              </div>
             </div>
             <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted)' }}>
-              Unit: <strong>kg</strong> (fixed)
+              Unit: <strong>kg</strong> · Min Stock sets the low-stock alert threshold on the Dashboard.
             </div>
             <div className="form-actions">
               <button className="btn-add" type="submit" disabled={saving}>
@@ -186,16 +199,17 @@ export default function RMWire() {
               <th>Diameter</th>
               <th>Grade</th>
               <th>Unit</th>
+              <th>Min Stock (kg)</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={6} className="empty">Loading…</td></tr>
+              <tr><td colSpan={7} className="empty">Loading…</td></tr>
             )}
             {!loading && records.length === 0 && (
-              <tr><td colSpan={6} className="empty">No wire types found.</td></tr>
+              <tr><td colSpan={7} className="empty">No wire types found.</td></tr>
             )}
             {records.map((row, i) => (
               <tr key={row.id}>
@@ -228,6 +242,17 @@ export default function RMWire() {
                     </td>
                     <td style={{ color: 'var(--muted)', fontSize: 12 }}>kg</td>
                     <td>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        className="mri"
+                        value={editData.min_stock_kg}
+                        onChange={e => setEditData(d => ({ ...d, min_stock_kg: e.target.value }))}
+                        style={{ width: 80 }}
+                      />
+                    </td>
+                    <td>
                       <span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>
                         {row.status}
                       </span>
@@ -256,6 +281,7 @@ export default function RMWire() {
                     <td className="num-cell">{row.diameter_mm}<span className="unit">mm</span></td>
                     <td>{row.grade}</td>
                     <td style={{ color: 'var(--muted)', fontSize: 12 }}>kg</td>
+                    <td className="num-cell">{row.min_stock_kg ?? 50}<span className="unit">kg</span></td>
                     <td>
                       <span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>
                         {row.status}

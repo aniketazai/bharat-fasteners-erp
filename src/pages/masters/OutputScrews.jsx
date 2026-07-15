@@ -2,22 +2,11 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 
-const EMPTY_FORM = {
-  screw_code:              '',
-  screw_name:              '',
-  die_spec:                '',
-  rm_wire_id:              '',
-  conversion_ratio_per_kg: '',
-}
-
-function wireLabel(w) {
-  return `${w.diameter_mm}mm – ${w.grade}`
-}
+const EMPTY_FORM = { screw_code: '', screw_name: '' }
 
 export default function OutputScrews() {
   const { user } = useAuth()
   const [records, setRecords]       = useState([])
-  const [wires, setWires]           = useState([])
   const [loading, setLoading]       = useState(true)
   const [showForm, setShowForm]     = useState(false)
   const [form, setForm]             = useState(EMPTY_FORM)
@@ -32,12 +21,11 @@ export default function OutputScrews() {
 
   async function load() {
     setLoading(true)
-    const [screwRes, wireRes] = await Promise.all([
-      supabase.from('output_screw_master').select('*').order('screw_code'),
-      supabase.from('rm_wire_master').select('*').eq('status', 'Active').order('diameter_mm'),
-    ])
-    setRecords(screwRes.data || [])
-    setWires(wireRes.data || [])
+    const { data } = await supabase
+      .from('output_screw_master')
+      .select('*')
+      .order('screw_code')
+    setRecords(data || [])
     setLoading(false)
   }
 
@@ -49,13 +37,9 @@ export default function OutputScrews() {
 
   function validate(data, excludeId = null) {
     const errs = {}
-    if (!data.screw_code.trim())              errs.screw_code = 'Screw code is required.'
+    if (!data.screw_code.trim())                   errs.screw_code = 'Screw code is required.'
     else if (isDupCode(data.screw_code, excludeId)) errs.screw_code = 'Screw code already exists.'
-    if (!data.screw_name.trim())              errs.screw_name = 'Screw name is required.'
-    if (!data.rm_wire_id)                     errs.rm_wire_id = 'Select a wire type.'
-    const ratio = parseFloat(data.conversion_ratio_per_kg)
-    if (!data.conversion_ratio_per_kg || isNaN(ratio) || ratio <= 0)
-      errs.conversion_ratio_per_kg = 'Enter a valid ratio > 0 (nos/kg).'
+    if (!data.screw_name.trim())                   errs.screw_name = 'Screw name is required.'
     return errs
   }
 
@@ -66,12 +50,9 @@ export default function OutputScrews() {
 
     setSaving(true)
     const { error } = await supabase.from('output_screw_master').insert({
-      screw_code:              form.screw_code.trim().toUpperCase(),
-      screw_name:              form.screw_name.trim(),
-      die_spec:                form.die_spec.trim() || null,
-      rm_wire_id:              form.rm_wire_id,
-      conversion_ratio_per_kg: parseFloat(form.conversion_ratio_per_kg),
-      created_by:              user?.id,
+      screw_code: form.screw_code.trim().toUpperCase(),
+      screw_name: form.screw_name.trim(),
+      created_by: user?.id,
     })
     setSaving(false)
     if (error) { setFormErrors({ screw_code: error.message }); return }
@@ -82,13 +63,7 @@ export default function OutputScrews() {
 
   function startEdit(row) {
     setEditId(row.id)
-    setEditData({
-      screw_code:              row.screw_code,
-      screw_name:              row.screw_name,
-      die_spec:                row.die_spec || '',
-      rm_wire_id:              row.rm_wire_id || '',
-      conversion_ratio_per_kg: String(row.conversion_ratio_per_kg),
-    })
+    setEditData({ screw_code: row.screw_code, screw_name: row.screw_name })
     setEditErrors({})
   }
 
@@ -97,11 +72,8 @@ export default function OutputScrews() {
     if (Object.keys(errs).length) { setEditErrors(errs); return }
 
     const { error } = await supabase.from('output_screw_master').update({
-      screw_code:              editData.screw_code.trim().toUpperCase(),
-      screw_name:              editData.screw_name.trim(),
-      die_spec:                editData.die_spec.trim() || null,
-      rm_wire_id:              editData.rm_wire_id,
-      conversion_ratio_per_kg: parseFloat(editData.conversion_ratio_per_kg),
+      screw_code: editData.screw_code.trim().toUpperCase(),
+      screw_name: editData.screw_name.trim(),
     }).eq('id', id)
     if (error) { setEditErrors({ screw_code: error.message }); return }
     setEditId(null)
@@ -114,10 +86,9 @@ export default function OutputScrews() {
     load()
   }
 
-  const wireMap    = Object.fromEntries(wires.map(w => [w.id, w]))
-  const active     = records.filter(r => r.status === 'Active').length
-  const inactive   = records.filter(r => r.status === 'Inactive').length
-  const filtered   = search.trim()
+  const active   = records.filter(r => r.status === 'Active').length
+  const inactive = records.filter(r => r.status === 'Inactive').length
+  const filtered = search.trim()
     ? records.filter(r =>
         r.screw_code.toLowerCase().includes(search.toLowerCase()) ||
         r.screw_name.toLowerCase().includes(search.toLowerCase())
@@ -169,14 +140,14 @@ export default function OutputScrews() {
         <div className="form-card">
           <div className="form-title">NEW OUTPUT SCREW</div>
           <form onSubmit={handleAdd}>
-            <div className="form-grid">
+            <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)' }}>
               <div className="form-group">
                 <label>Screw Code *</label>
                 <input
                   className={formErrors.screw_code ? 'error' : ''}
                   value={form.screw_code}
                   onChange={e => setForm(f => ({ ...f, screw_code: e.target.value }))}
-                  placeholder="e.g. SC-001"
+                  placeholder="e.g. SC001"
                 />
                 {formErrors.screw_code && <span className="field-error">{formErrors.screw_code}</span>}
               </div>
@@ -186,46 +157,9 @@ export default function OutputScrews() {
                   className={formErrors.screw_name ? 'error' : ''}
                   value={form.screw_name}
                   onChange={e => setForm(f => ({ ...f, screw_name: e.target.value }))}
-                  placeholder="e.g. M6 × 25 Hex Bolt"
+                  placeholder="e.g. M4x12 CSK Screw"
                 />
                 {formErrors.screw_name && <span className="field-error">{formErrors.screw_name}</span>}
-              </div>
-              <div className="form-group">
-                <label>Die Spec / Size</label>
-                <input
-                  value={form.die_spec}
-                  onChange={e => setForm(f => ({ ...f, die_spec: e.target.value }))}
-                  placeholder="e.g. M6"
-                />
-              </div>
-              <div className="form-group">
-                <label>RM Wire *</label>
-                <select
-                  className={formErrors.rm_wire_id ? 'error' : ''}
-                  value={form.rm_wire_id}
-                  onChange={e => setForm(f => ({ ...f, rm_wire_id: e.target.value }))}
-                >
-                  <option value="">— Select wire —</option>
-                  {wires.map(w => (
-                    <option key={w.id} value={w.id}>{wireLabel(w)}</option>
-                  ))}
-                </select>
-                {formErrors.rm_wire_id && <span className="field-error">{formErrors.rm_wire_id}</span>}
-              </div>
-              <div className="form-group">
-                <label>Conversion Ratio (nos/kg) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  className={formErrors.conversion_ratio_per_kg ? 'error' : ''}
-                  value={form.conversion_ratio_per_kg}
-                  onChange={e => setForm(f => ({ ...f, conversion_ratio_per_kg: e.target.value }))}
-                  placeholder="e.g. 430"
-                />
-                {formErrors.conversion_ratio_per_kg && (
-                  <span className="field-error">{formErrors.conversion_ratio_per_kg}</span>
-                )}
               </div>
             </div>
             <div className="form-actions">
@@ -251,19 +185,14 @@ export default function OutputScrews() {
               <th style={{ width: 40 }}>#</th>
               <th>Code</th>
               <th>Screw Name</th>
-              <th>Die Spec</th>
-              <th>RM Wire</th>
-              <th>Ratio (nos/kg)</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading && (
-              <tr><td colSpan={8} className="empty">Loading…</td></tr>
-            )}
+            {loading && <tr><td colSpan={5} className="empty">Loading…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={8} className="empty">
+              <tr><td colSpan={5} className="empty">
                 {search ? 'No screws match your search.' : 'No screws found.'}
               </td></tr>
             )}
@@ -286,67 +215,17 @@ export default function OutputScrews() {
                         className={`mri${editErrors.screw_name ? ' error' : ''}`}
                         value={editData.screw_name}
                         onChange={e => setEditData(d => ({ ...d, screw_name: e.target.value }))}
-                        style={{ minWidth: 140 }}
+                        style={{ minWidth: 180 }}
                       />
                       {editErrors.screw_name && <div className="field-error">{editErrors.screw_name}</div>}
                     </td>
                     <td>
-                      <input
-                        className="mri"
-                        value={editData.die_spec}
-                        onChange={e => setEditData(d => ({ ...d, die_spec: e.target.value }))}
-                        style={{ width: 70 }}
-                      />
-                    </td>
-                    <td>
-                      <select
-                        className={`mri-sel${editErrors.rm_wire_id ? ' error' : ''}`}
-                        value={editData.rm_wire_id}
-                        onChange={e => setEditData(d => ({ ...d, rm_wire_id: e.target.value }))}
-                        style={{ minWidth: 130 }}
-                      >
-                        <option value="">— Select —</option>
-                        {wires.map(w => (
-                          <option key={w.id} value={w.id}>{wireLabel(w)}</option>
-                        ))}
-                      </select>
-                      {editErrors.rm_wire_id && <div className="field-error">{editErrors.rm_wire_id}</div>}
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        className={`mri${editErrors.conversion_ratio_per_kg ? ' error' : ''}`}
-                        value={editData.conversion_ratio_per_kg}
-                        onChange={e => setEditData(d => ({ ...d, conversion_ratio_per_kg: e.target.value }))}
-                        style={{ width: 80 }}
-                      />
-                      {editErrors.conversion_ratio_per_kg && (
-                        <div className="field-error">{editErrors.conversion_ratio_per_kg}</div>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>
-                        {row.status}
-                      </span>
+                      <span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>{row.status}</span>
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          className="btn-add"
-                          style={{ fontSize: 11, padding: '5px 12px' }}
-                          onClick={() => handleEditSave(row.id)}
-                        >
-                          SAVE
-                        </button>
-                        <button
-                          className="btn-clear"
-                          style={{ fontSize: 11, padding: '5px 10px' }}
-                          onClick={() => { setEditId(null); setEditErrors({}) }}
-                        >
-                          CANCEL
-                        </button>
+                        <button className="btn-add" style={{ fontSize: 11, padding: '5px 12px' }} onClick={() => handleEditSave(row.id)}>SAVE</button>
+                        <button className="btn-clear" style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => { setEditId(null); setEditErrors({}) }}>CANCEL</button>
                       </div>
                     </td>
                   </>
@@ -354,27 +233,11 @@ export default function OutputScrews() {
                   <>
                     <td className="num-cell">{row.screw_code}</td>
                     <td>{row.screw_name}</td>
-                    <td style={{ color: 'var(--muted)', fontSize: 12 }}>{row.die_spec || '—'}</td>
-                    <td style={{ fontSize: 12 }}>
-                      {wireMap[row.rm_wire_id] ? wireLabel(wireMap[row.rm_wire_id]) : '—'}
-                    </td>
-                    <td className="num-cell">
-                      {row.conversion_ratio_per_kg}
-                      <span className="unit">nos/kg</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>
-                        {row.status}
-                      </span>
-                    </td>
+                    <td><span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>{row.status}</span></td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn-icon" onClick={() => startEdit(row)}>EDIT</button>
-                        <button
-                          className="btn-icon"
-                          onClick={() => toggleStatus(row)}
-                          style={{ color: row.status === 'Active' ? 'var(--red)' : 'var(--green)' }}
-                        >
+                        <button className="btn-icon" onClick={() => toggleStatus(row)} style={{ color: row.status === 'Active' ? 'var(--red)' : 'var(--green)' }}>
                           {row.status === 'Active' ? 'DEACTIVATE' : 'ACTIVATE'}
                         </button>
                       </div>
