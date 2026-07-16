@@ -335,6 +335,23 @@ export default function RMLot() {
               )
             })}
           </tbody>
+          {!loading && filtered.length > 0 && (() => {
+            const tIn  = filtered.filter(e => e.txn_type !== 'Issue').reduce((s, e) => s + parseFloat(e.quantity_kg || 0), 0)
+            const tOut = filtered.filter(e => e.txn_type === 'Issue').reduce((s, e) => s + parseFloat(e.quantity_kg || 0), 0)
+            const tVal = filtered.reduce((s, e) => s + (e.rate_per_kg && e.quantity_kg ? parseFloat(e.rate_per_kg) * parseFloat(e.quantity_kg) : 0), 0)
+            const TFD = (c, ex = {}) => <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...ex }}>{c}</td>
+            return (
+              <tfoot>
+                <tr>
+                  {TFD(`TOTAL — ${filtered.length}`, { colSpan: 4, letterSpacing: '.04em' })}
+                  {TFD(<span>+{tIn.toFixed(2)} / -{tOut.toFixed(2)}</span>, { textAlign: 'right' })}
+                  {TFD('', { colSpan: 3 })}
+                  {TFD(tVal > 0 ? `₹${tVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—', { textAlign: 'right' })}
+                  {TFD('', { colSpan: 3 })}
+                </tr>
+              </tfoot>
+            )
+          })()}
         </table>
       </div>
     </div>

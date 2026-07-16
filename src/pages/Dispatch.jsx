@@ -501,6 +501,19 @@ export default function Dispatch() {
               </tr>
             ))}
           </tbody>
+          {!loading && entries.length > 0 && (() => {
+            const total = entries.reduce((s, e) => s + (e.quantity_nos || 0), 0)
+            const TFD = (c, ex = {}) => <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...ex }}>{c}</td>
+            return (
+              <tfoot>
+                <tr>
+                  {TFD(`TOTAL — ${entries.length} entries`, { colSpan: 6, letterSpacing: '.04em' })}
+                  {TFD(total.toLocaleString(), { textAlign: 'right', color: 'var(--green)', fontSize: 12 })}
+                  {TFD('', { colSpan: 2 })}
+                </tr>
+              </tfoot>
+            )
+          })()}
         </table>
       </div>
     </div>

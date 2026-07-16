@@ -507,6 +507,21 @@ export default function Plating() {
               )
             })}
           </tbody>
+          {!loading && filtered.length > 0 && (() => {
+            const tSent = filtered.reduce((s, e) => s + (parseFloat(e.sent_qty) || 0), 0)
+            const tRecv = filtered.reduce((s, e) => s + (parseFloat(e.received_qty) || 0), 0)
+            const TFD = (c, ex = {}) => <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...ex }}>{c}</td>
+            return (
+              <tfoot>
+                <tr>
+                  {TFD(`TOTAL — ${filtered.length} lots`, { colSpan: 8, letterSpacing: '.04em' })}
+                  {TFD(tSent.toFixed(2), { textAlign: 'right' })}
+                  {TFD(tRecv > 0 ? tRecv.toFixed(2) : '—', { textAlign: 'right', color: tRecv > 0 ? 'var(--green)' : 'var(--dim)' })}
+                  {TFD('', { colSpan: 3 })}
+                </tr>
+              </tfoot>
+            )
+          })()}
         </table>
       </div>
     </div>

@@ -1116,6 +1116,25 @@ export default function Production() {
               )
             })}
           </tbody>
+          {!loading && entries.length > 0 && (() => {
+            const tw = entries.reduce((s, e) => s + parseFloat(e.wire_used_kg || 0), 0)
+            const te = entries.reduce((s, e) => s + (e.expected_nos || 0), 0)
+            const to = entries.reduce((s, e) => s + (e.output_nos || 0), 0)
+            const tl = Math.max(te - to, 0)
+            const TFD = (c, ex = {}) => <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...ex }}>{c}</td>
+            return (
+              <tfoot>
+                <tr>
+                  {TFD(`TOTAL — ${entries.length} entries`, { colSpan: 6, letterSpacing: '.04em' })}
+                  {TFD(tw.toFixed(2), { textAlign: 'right' })}
+                  {TFD(te > 0 ? te.toLocaleString() : '—', { textAlign: 'right', color: 'var(--muted)' })}
+                  {TFD(to.toLocaleString(), { textAlign: 'right', color: 'var(--green)' })}
+                  {TFD(tl > 0 ? tl.toLocaleString() : '—', { textAlign: 'right', color: tl > 0 ? 'var(--red)' : 'var(--dim)' })}
+                  {TFD('', { colSpan: 2 })}
+                </tr>
+              </tfoot>
+            )
+          })()}
         </table>
       </div>
 

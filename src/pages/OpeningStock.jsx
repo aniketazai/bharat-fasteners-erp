@@ -265,6 +265,17 @@ export default function OpeningStock() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', letterSpacing: '.04em' }}>
+                    TOTAL — {wireRows.length} wires
+                  </td>
+                  <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13, background: '#f5f4f2', borderTop: '2px solid var(--border2)', color: 'var(--blue)' }}>
+                    {totalWireKg.toFixed(2)}
+                  </td>
+                  <td colSpan={2} style={{ background: '#f5f4f2', borderTop: '2px solid var(--border2)' }} />
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
@@ -388,6 +399,18 @@ export default function OpeningStock() {
                   )
                 })}
               </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={4} style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', letterSpacing: '.04em' }}>
+                    TOTAL — {fgRows.length} screws
+                  </td>
+                  <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13, background: '#f5f4f2', borderTop: '2px solid var(--border2)' }}>
+                    <div style={{ color: '#16A34A' }}>{totalFgPlated.toLocaleString()} <span style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400 }}>PLATED</span></div>
+                    {totalFgUnplated > 0 && <div style={{ color: '#DC2626', marginTop: 2 }}>{totalFgUnplated.toLocaleString()} <span style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400 }}>UNPLATED</span></div>}
+                  </td>
+                  <td colSpan={3} style={{ background: '#f5f4f2', borderTop: '2px solid var(--border2)' }} />
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
