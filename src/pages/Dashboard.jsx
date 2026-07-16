@@ -446,7 +446,7 @@ export default function Dashboard() {
       supabase.from('dispatch_entries').select('dispatch_date,order_id,order_item_id,quantity_nos')
         .gte('dispatch_date', from).lte('dispatch_date', to),
       supabase.from('conversion_master').select('screw_id,conversion_ratio_per_kg'),
-      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type,entry_date,screw:screw_id(screw_code,screw_name)'),
+      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type,entry_date'),
     ])
 
     const allOrd  = oRes.data    || []
@@ -518,7 +518,7 @@ export default function Dashboard() {
       if (!o.screw_id) continue
       prodBySid[o.screw_id] = (prodBySid[o.screw_id] || 0) + o.quantity_nos
       if (o.stock_type === 'PLATED') platRecvBySid[o.screw_id] = (platRecvBySid[o.screw_id] || 0) + o.quantity_nos
-      if (o.screw && !screwInfo[o.screw_id]) screwInfo[o.screw_id] = { code: o.screw.screw_code || '—', name: o.screw.screw_name || '—' }
+      if (screwLookup[o.screw_id] && !screwInfo[o.screw_id]) screwInfo[o.screw_id] = screwLookup[o.screw_id]
     }
 
     const fgTotal = Object.keys(prodBySid).reduce((s, sid) =>
@@ -779,7 +779,7 @@ export default function Dashboard() {
       fgStockList,
     })
     setLoading(false)
-  }, [applied, machines])
+  }, [applied, machines, screws])
 
   useEffect(() => { loadDash() }, [loadDash])
 
