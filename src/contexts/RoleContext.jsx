@@ -7,9 +7,9 @@ const RoleContext = createContext({ role: null, profile: null, loading: true })
 // Paths each role is allowed to visit (null = all paths allowed)
 export const ROLE_PATHS = {
   admin:    null,
-  operator: new Set(['/production', '/plating']),
-  quality:  new Set(['/rm-requirement', '/rm-lot', '/plating', '/dispatch']),
-  member:   new Set(['/rm-requirement', '/rm-lot', '/plating', '/dispatch']), // legacy → same as quality
+  operator: new Set(['/production', '/plating', '/fg']),
+  quality:  new Set(['/rm-requirement', '/rm-lot', '/plating', '/fg', '/dispatch']),
+  member:   new Set(['/rm-requirement', '/rm-lot', '/plating', '/fg', '/dispatch']), // legacy → same as quality
 }
 
 // Where to land after login (or on redirect from unauthorized page)

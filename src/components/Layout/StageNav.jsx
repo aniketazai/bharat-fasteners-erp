@@ -8,7 +8,8 @@ const STEPS = [
   { num: '3', label: 'RM Lot',         path: '/rm-lot'         },
   { num: '4', label: 'Production',     path: '/production'     },
   { num: '5', label: 'Plating',        path: '/plating'        },
-  { num: '6', label: 'Dispatch',       path: '/dispatch'       },
+  { num: '6', label: 'Fin. Goods',     path: '/fg'             },
+  { num: '7', label: 'Dispatch',       path: '/dispatch'       },
 ]
 
 export default function StageNav() {

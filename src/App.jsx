@@ -20,6 +20,7 @@ import Customers from './pages/masters/Customers'
 import PlatingTypes from './pages/masters/PlatingTypes'
 import ConversionMaster from './pages/masters/ConversionMaster'
 import ResetData from './pages/ResetData'
+import FinishedGoods from './pages/FinishedGoods'
 import AdminUsers from './pages/admin/Users'
 import './styles/theme.css'
 
@@ -88,6 +89,7 @@ function AppShell() {
           <Route path="/rm-lot"         element={<Guard path="/rm-lot"              element={<RMLot />} />} />
           <Route path="/production"     element={<Guard path="/production"          element={<Production />} />} />
           <Route path="/plating"        element={<Guard path="/plating"             element={<Plating />} />} />
+          <Route path="/fg"             element={<Guard path="/fg"                  element={<FinishedGoods />} />} />
           <Route path="/dispatch"       element={<Guard path="/dispatch"            element={<Dispatch />} />} />
           <Route path="/masters/machines"      element={<Guard path="/masters/machines"      element={<Machines />} />} />
           <Route path="/masters/rm-wire"       element={<Guard path="/masters/rm-wire"       element={<RMWire />} />} />

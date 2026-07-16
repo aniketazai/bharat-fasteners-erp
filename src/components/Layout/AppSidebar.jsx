@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ClipboardList, FileText, Package,
   Cpu, Layers, Truck, Settings2, Cable, Zap,
   ArrowLeftRight, Users, Palette, ChevronLeft, ChevronRight,
-  ChevronDown, ChevronUp, LogOut, User, ShieldCheck,
+  ChevronDown, ChevronUp, LogOut, User, ShieldCheck, Archive,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useRole, ROLE_PATHS } from '../../contexts/RoleContext'
@@ -26,6 +26,7 @@ const GROUPS = [
       { icon: Package,        label: 'RM Lot',        path: '/rm-lot'         },
       { icon: Cpu,            label: 'Production',    path: '/production'     },
       { icon: Layers,         label: 'Plating',       path: '/plating'        },
+      { icon: Archive,        label: 'Fin. Goods',    path: '/fg'             },
       { icon: Truck,          label: 'Dispatch',      path: '/dispatch'       },
     ],
   },

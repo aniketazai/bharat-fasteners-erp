@@ -460,13 +460,14 @@ export default function Dashboard() {
     const totalRm = Object.values(stock).reduce((s, v) => s + Math.max(v, 0), 0)
 
     // FG Stock (all-time)
-    const prodBySid = {}, vendorBySid = {}
+    const prodBySid = {}, vendorBySid = {}, platRecvBySid = {}
     for (const p of aProd) {
       if (p.screw_id) prodBySid[p.screw_id] = (prodBySid[p.screw_id] || 0) + (p.output_nos || 0)
     }
     for (const p of plat) {
       const pend = (p.sent_qty || 0) - (p.received_qty || 0)
       if (pend > 0) vendorBySid[p.screw_id] = (vendorBySid[p.screw_id] || 0) + pend
+      if (p.received_qty > 0) platRecvBySid[p.screw_id] = (platRecvBySid[p.screw_id] || 0) + (p.received_qty || 0)
     }
     const itemIdToScrew = Object.fromEntries(items.map(it => [it.id, it.screw_id]))
     const dispBySid = {}
@@ -475,7 +476,7 @@ export default function Dashboard() {
       if (sid) dispBySid[sid] = (dispBySid[sid] || 0) + (d2.quantity_nos || 0)
     }
     const fgTotal = Object.keys(prodBySid).reduce((s, sid) =>
-      s + Math.max((prodBySid[sid]||0) - (vendorBySid[sid]||0) - (dispBySid[sid]||0), 0), 0)
+      s + Math.max((platRecvBySid[sid]||0) - (dispBySid[sid]||0), 0), 0)
 
     // Screw info lookup for FG stock list
     const screwInfo = {}
@@ -484,16 +485,22 @@ export default function Dashboard() {
         screwInfo[it.screw_id] = { code: it.screw.screw_code || '—', name: it.screw.screw_name || '—' }
       }
     }
-    const allFgSids = new Set([...Object.keys(prodBySid), ...Object.keys(vendorBySid), ...Object.keys(dispBySid)])
+    const allFgSids = new Set([...Object.keys(prodBySid), ...Object.keys(dispBySid)])
     const fgStockList = [...allFgSids]
-      .map(sid => ({
-        code: screwInfo[sid]?.code || sid.slice(-6),
-        name: screwInfo[sid]?.name || '—',
-        produced:   prodBySid[sid]   || 0,
-        atVendor:   vendorBySid[sid] || 0,
-        dispatched: dispBySid[sid]   || 0,
-        inStock:    Math.max((prodBySid[sid]||0) - (vendorBySid[sid]||0) - (dispBySid[sid]||0), 0),
-      }))
+      .map(sid => {
+        const produced   = prodBySid[sid]     || 0
+        const plated     = platRecvBySid[sid] || 0
+        const dispatched = dispBySid[sid]     || 0
+        const unplated   = Math.max(produced - plated, 0)
+        const inStock    = Math.max(plated - dispatched, 0)
+        let status = 'UNPLATED'
+        if (plated > 0) status = (plated + dispatched >= produced) ? 'PLATED' : 'PARTIAL'
+        return {
+          code: screwInfo[sid]?.code || sid.slice(-6),
+          name: screwInfo[sid]?.name || '—',
+          produced, plated, unplated, dispatched, inStock, status,
+        }
+      })
       .filter(r => r.produced > 0)
       .sort((a, b) => b.inStock - a.inStock)
 
@@ -1085,21 +1092,27 @@ export default function Dashboard() {
             </div>
 
             {/* FG Stock List */}
-            <Box title="FG Stock — Screw-wise Inventory" style={{ marginBottom: 12 }}>
+            <Box title="FG Stock — Plating Status by Screw" style={{ marginBottom: 12 }}>
               <MiniTable
                 headers={[
                   { label: 'Screw Code' }, { label: 'Screw Name' },
-                  { label: 'Produced', right: true }, { label: 'At Vendor', right: true },
-                  { label: 'Dispatched', right: true }, { label: 'In Stock', right: true },
+                  { label: 'Produced', right: true }, { label: 'Plated', right: true },
+                  { label: 'Unplated', right: true }, { label: 'Dispatched', right: true },
+                  { label: 'FG Stock', right: true }, { label: 'Status' },
                 ]}
-                rows={(d.fgStockList || []).map(r => [
-                  { label: r.code, cond: true, bold: true },
-                  { label: r.name },
-                  { label: IN(r.produced), right: true, color: 'var(--muted)' },
-                  { label: r.atVendor > 0 ? IN(r.atVendor) : '—', right: true, color: r.atVendor > 0 ? C.yellow : 'var(--dim)' },
-                  { label: IN(r.dispatched), right: true, color: 'var(--muted)' },
-                  { label: IN(r.inStock), right: true, bold: true, color: r.inStock > 0 ? C.green : C.red },
-                ])}
+                rows={(d.fgStockList || []).map(r => {
+                  const stColor = r.status === 'PLATED' ? C.green : r.status === 'PARTIAL' ? C.yellow : C.red
+                  return [
+                    { label: r.code, cond: true, bold: true },
+                    { label: r.name },
+                    { label: IN(r.produced), right: true, color: 'var(--muted)' },
+                    { label: r.plated > 0 ? IN(r.plated) : '—', right: true, color: r.plated > 0 ? C.green : 'var(--dim)' },
+                    { label: r.unplated > 0 ? IN(r.unplated) : '—', right: true, color: r.unplated > 0 ? C.red : 'var(--dim)' },
+                    { label: r.dispatched > 0 ? IN(r.dispatched) : '—', right: true, color: 'var(--muted)' },
+                    { label: r.inStock > 0 ? IN(r.inStock) : '—', right: true, bold: true, color: r.inStock > 0 ? C.green : 'var(--dim)' },
+                    <span key={r.code} style={{ fontSize: 9, fontFamily: 'var(--cond)', fontWeight: 700, letterSpacing: '.06em', padding: '2px 7px', borderRadius: 10, background: stColor + '18', color: stColor, border: `1px solid ${stColor}44` }}>{r.status}</span>,
+                  ]
+                })}
                 emptyMsg="No finished goods produced yet."
               />
             </Box>
