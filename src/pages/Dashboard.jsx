@@ -453,11 +453,10 @@ export default function Dashboard() {
     const dCurr    = allDisp.filter(d => inRange(d, from, to, 'dispatch_date'))
     const dPrev    = allDisp.filter(d => inRange(d, pf, pt, 'dispatch_date'))
 
-    // RM stock (all-time running total)
+    // RM stock (all-time running total — quantity_kg is negative for outgoing txns)
     const stock = {}
     for (const l of lots) {
-      const q = parseFloat(l.quantity_kg) || 0
-      stock[l.wire_id] = (stock[l.wire_id] || 0) + (l.txn_type === 'Issue' ? -q : q)
+      stock[l.wire_id] = (stock[l.wire_id] || 0) + (parseFloat(l.quantity_kg) || 0)
     }
     const totalRm = Object.values(stock).reduce((s, v) => s + Math.max(v, 0), 0)
 
@@ -657,16 +656,13 @@ export default function Dashboard() {
     const lotsBefore   = lots.filter(l => !l.lot_date || l.lot_date < from)
     const lotsInPeriod = lots.filter(l => l.lot_date && l.lot_date >= from && l.lot_date <= to)
 
-    const rmOpening = lotsBefore.reduce((s, l) => {
-      const q = parseFloat(l.quantity_kg) || 0
-      return s + (l.txn_type === 'Issue' ? -q : q)
-    }, 0)
+    const rmOpening = lotsBefore.reduce((s, l) => s + (parseFloat(l.quantity_kg) || 0), 0)
     const rmProcurement = lotsInPeriod
-      .filter(l => l.txn_type !== 'Issue')
+      .filter(l => parseFloat(l.quantity_kg) > 0)
       .reduce((s, l) => s + (parseFloat(l.quantity_kg) || 0), 0)
     const rmIssues = lotsInPeriod
-      .filter(l => l.txn_type === 'Issue')
-      .reduce((s, l) => s + (parseFloat(l.quantity_kg) || 0), 0)
+      .filter(l => parseFloat(l.quantity_kg) < 0)
+      .reduce((s, l) => s + Math.abs(parseFloat(l.quantity_kg) || 0), 0)
     const rmClosing = rmOpening + rmProcurement - rmIssues
 
     // FG Stock Flow: Opening + Production − Dispatch = Closing (all in pcs via conversion_master)
