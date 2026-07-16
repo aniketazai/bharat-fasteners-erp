@@ -161,7 +161,7 @@ export default function Dispatch() {
     setForm(f => ({ ...f, item_id, quantity_nos: remaining || '' }))
 
     if (item?.screw_id) {
-      const [platRes, orderItemRes] = await Promise.all([
+      const [platRes, orderItemRes, openRes] = await Promise.all([
         supabase.from('plating_entries')
           .select('received_qty')
           .eq('screw_id', item.screw_id)
@@ -169,8 +169,14 @@ export default function Dispatch() {
         supabase.from('order_items')
           .select('dispatched_qty')
           .eq('screw_id', item.screw_id),
+        supabase.from('fg_opening_stock')
+          .select('quantity_nos')
+          .eq('screw_id', item.screw_id)
+          .eq('stock_type', 'PLATED'),
       ])
-      const totalReceived   = (platRes.data || []).reduce((s, p) => s + (p.received_qty || 0), 0)
+      const platReceived    = (platRes.data  || []).reduce((s, p) => s + (p.received_qty  || 0), 0)
+      const openingPlated   = (openRes.data  || []).reduce((s, o) => s + (o.quantity_nos  || 0), 0)
+      const totalReceived   = platReceived + openingPlated
       const totalDispatched = (orderItemRes.data || []).reduce((s, i) => s + (i.dispatched_qty || 0), 0)
       const available       = Math.max(0, totalReceived - totalDispatched)
       setPlatCheck({ blocked: available <= 0, available, received: totalReceived, dispatched: totalDispatched })

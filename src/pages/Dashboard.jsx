@@ -408,7 +408,7 @@ export default function Dashboard() {
       mkPQ().gte('entry_date', from).lte('entry_date', to),
       mkPQ().gte('entry_date', pf).lte('entry_date', pt),
       supabase.from('dispatch_entries').select('dispatch_date,order_id,order_item_id,quantity_nos'),
-      supabase.from('rm_lot').select('wire_id,txn_type,quantity_kg,txn_date'),
+      supabase.from('rm_lot').select('wire_id,txn_type,quantity_kg,lot_date'),
       supabase.from('rm_wire_master').select('id,diameter_mm,grade,min_stock_kg').eq('status','Active'),
       supabase.from('order_items').select('id,order_id,screw_id,order_qty,dispatched_qty,screw:screw_id(screw_code,screw_name)'),
       supabase.from('plating_entries').select('screw_id,sent_qty,received_qty,send_date,receive_date'),
@@ -417,7 +417,7 @@ export default function Dashboard() {
       supabase.from('dispatch_entries').select('dispatch_date,order_id,order_item_id,quantity_nos')
         .gte('dispatch_date', from).lte('dispatch_date', to),
       supabase.from('conversion_master').select('screw_id,conversion_ratio_per_kg'),
-      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type'),
+      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type,entry_date,screw:screw_id(screw_code,screw_name)'),
     ])
 
     const allOrd  = oRes.data    || []
@@ -477,22 +477,24 @@ export default function Dashboard() {
       const sid = d2.order_item_id ? itemIdToScrew[d2.order_item_id] : null
       if (sid) dispBySid[sid] = (dispBySid[sid] || 0) + (d2.quantity_nos || 0)
     }
-    const fgTotal = Object.keys(prodBySid).reduce((s, sid) =>
-      s + Math.max((platRecvBySid[sid]||0) - (dispBySid[sid]||0), 0), 0)
 
-    // Screw info lookup for FG stock list
+    // Screw info lookup for FG stock list (from order_items)
     const screwInfo = {}
     for (const it of items) {
       if (it.screw_id && it.screw) {
         screwInfo[it.screw_id] = { code: it.screw.screw_code || '—', name: it.screw.screw_name || '—' }
       }
     }
-    // Opening stock: add to produced and (if PLATED) to platRecvBySid
+    // Opening stock: add to produced + plated BEFORE fgTotal; also backfill screwInfo for OS-only screws
     for (const o of fgOpen) {
       if (!o.screw_id) continue
       prodBySid[o.screw_id] = (prodBySid[o.screw_id] || 0) + o.quantity_nos
       if (o.stock_type === 'PLATED') platRecvBySid[o.screw_id] = (platRecvBySid[o.screw_id] || 0) + o.quantity_nos
+      if (o.screw && !screwInfo[o.screw_id]) screwInfo[o.screw_id] = { code: o.screw.screw_code || '—', name: o.screw.screw_name || '—' }
     }
+
+    const fgTotal = Object.keys(prodBySid).reduce((s, sid) =>
+      s + Math.max((platRecvBySid[sid]||0) - (dispBySid[sid]||0), 0), 0)
 
     const allFgSids = new Set([...Object.keys(prodBySid), ...Object.keys(dispBySid)])
     const fgStockList = [...allFgSids]
@@ -652,8 +654,8 @@ export default function Dashboard() {
     // ── S4: RM Analysis + Stock Flows ─────────────────────────────────────────
 
     // RM Stock Flow: Opening + Procurement − Issues = Closing
-    const lotsBefore   = lots.filter(l => !l.txn_date || l.txn_date < from)
-    const lotsInPeriod = lots.filter(l => l.txn_date && l.txn_date >= from && l.txn_date <= to)
+    const lotsBefore   = lots.filter(l => !l.lot_date || l.lot_date < from)
+    const lotsInPeriod = lots.filter(l => l.lot_date && l.lot_date >= from && l.lot_date <= to)
 
     const rmOpening = lotsBefore.reduce((s, l) => {
       const q = parseFloat(l.quantity_kg) || 0
@@ -676,7 +678,9 @@ export default function Dashboard() {
     const fgProdBefore   = toPcs(aProdBefore)
     const fgDispBefore   = dispBefore.reduce((s, d) => s + (d.quantity_nos || 0), 0)
     const fgAtVendBefore = platBefore.reduce((s, p) => s + Math.max((p.sent_qty||0) - (p.received_qty||0), 0), 0)
-    const fgOpening      = Math.max(fgProdBefore - fgDispBefore - fgAtVendBefore, 0)
+    const fgOpenStockBefore = fgOpen.filter(o => !o.entry_date || o.entry_date < from)
+      .reduce((s, o) => s + (o.stock_type === 'PLATED' ? o.quantity_nos : 0), 0)
+    const fgOpening      = Math.max(fgProdBefore - fgDispBefore - fgAtVendBefore, 0) + fgOpenStockBefore
     const fgProduced     = toPcs(aProdInPeriod)
     const fgDispatched   = dispIn.reduce((s, d) => s + (d.quantity_nos || 0), 0)
     const fgClosing      = Math.max(fgOpening + fgProduced - fgDispatched, 0)
@@ -691,9 +695,9 @@ export default function Dashboard() {
 
     const rmConsumptionMap = {}
     for (const l of lots) {
-      if (l.txn_type === 'Issue' && l.txn_date && l.txn_date >= from && l.txn_date <= to) {
-        if (!rmConsumptionMap[l.txn_date]) rmConsumptionMap[l.txn_date] = 0
-        rmConsumptionMap[l.txn_date] += parseFloat(l.quantity_kg) || 0
+      if (l.txn_type === 'Issue' && l.lot_date && l.lot_date >= from && l.lot_date <= to) {
+        if (!rmConsumptionMap[l.lot_date]) rmConsumptionMap[l.lot_date] = 0
+        rmConsumptionMap[l.lot_date] += parseFloat(l.quantity_kg) || 0
       }
     }
     const rmConsumption = Object.entries(rmConsumptionMap)
