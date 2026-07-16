@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ClipboardList, FileText, Package,
   Cpu, Layers, Truck, Settings2, Cable, Zap,
   ArrowLeftRight, Users, Palette, ChevronLeft, ChevronRight,
-  ChevronDown, ChevronUp, LogOut, User, ShieldCheck, Archive,
+  ChevronDown, ChevronUp, LogOut, User, ShieldCheck, Archive, BookOpen,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useRole, ROLE_PATHS } from '../../contexts/RoleContext'
@@ -14,8 +14,9 @@ const GROUPS = [
   {
     label: 'CORE',
     items: [
-      { icon: LayoutDashboard, label: 'Dashboard',  path: '/dashboard'    },
-      { icon: ShieldCheck,     label: 'Users',       path: '/admin/users'  },
+      { icon: LayoutDashboard, label: 'Dashboard',     path: '/dashboard'       },
+      { icon: BookOpen,        label: 'Opening Stock', path: '/opening-stock'   },
+      { icon: ShieldCheck,     label: 'Users',         path: '/admin/users'     },
     ],
   },
   {

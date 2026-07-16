@@ -21,6 +21,7 @@ import PlatingTypes from './pages/masters/PlatingTypes'
 import ConversionMaster from './pages/masters/ConversionMaster'
 import ResetData from './pages/ResetData'
 import FinishedGoods from './pages/FinishedGoods'
+import OpeningStock from './pages/OpeningStock'
 import AdminUsers from './pages/admin/Users'
 import './styles/theme.css'
 
@@ -97,6 +98,7 @@ function AppShell() {
           <Route path="/masters/conversions"   element={<Guard path="/masters/conversions"   element={<ConversionMaster />} />} />
           <Route path="/masters/customers"     element={<Guard path="/masters/customers"     element={<Customers />} />} />
           <Route path="/masters/plating-types" element={<Guard path="/masters/plating-types" element={<PlatingTypes />} />} />
+          <Route path="/opening-stock" element={<Guard path="/opening-stock" element={<OpeningStock />} />} />
           <Route path="/admin/users" element={<Guard path="/admin/users" element={<AdminUsers />} />} />
           <Route path="/reset" element={<ResetData />} />
           <Route path="*" element={<HomeRedirect />} />

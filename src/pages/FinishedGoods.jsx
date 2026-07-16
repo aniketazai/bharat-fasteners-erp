@@ -26,7 +26,7 @@ export default function FinishedGoods() {
 
   async function load() {
     setLoading(true)
-    const [prodRes, platRes, orderItemRes, dispRes] = await Promise.all([
+    const [prodRes, platRes, orderItemRes, dispRes, openRes, screwRes] = await Promise.all([
       supabase.from('production_entries')
         .select('screw_id, output_nos, screw:screw_id(screw_code, screw_name)'),
       supabase.from('plating_entries')
@@ -35,13 +35,21 @@ export default function FinishedGoods() {
         .select('id, screw_id'),
       supabase.from('dispatch_entries')
         .select('order_item_id, quantity_nos'),
+      supabase.from('fg_opening_stock')
+        .select('screw_id, quantity_nos, stock_type'),
+      supabase.from('output_screw_master')
+        .select('id, screw_code, screw_name'),
     ])
 
-    // Produced per screw
+    // Screw lookup
+    const screwLookup = {}
+    for (const s of (screwRes.data || [])) screwLookup[s.id] = { code: s.screw_code, name: s.screw_name }
+
+    // Produced per screw (from production entries)
     const prodMap = {}
     for (const p of (prodRes.data || [])) {
       if (!p.screw_id) continue
-      if (!prodMap[p.screw_id]) prodMap[p.screw_id] = { code: p.screw?.screw_code || '—', name: p.screw?.screw_name || '—', produced: 0 }
+      if (!prodMap[p.screw_id]) prodMap[p.screw_id] = { code: p.screw?.screw_code || screwLookup[p.screw_id]?.code || '—', name: p.screw?.screw_name || screwLookup[p.screw_id]?.name || '—', produced: 0 }
       prodMap[p.screw_id].produced += (p.output_nos || 0)
     }
 
@@ -50,6 +58,14 @@ export default function FinishedGoods() {
     for (const p of (platRes.data || [])) {
       if (!p.screw_id || !p.received_qty) continue
       platedMap[p.screw_id] = (platedMap[p.screw_id] || 0) + (p.received_qty || 0)
+    }
+
+    // Opening stock: adds to produced + plated (PLATED) or produced only (UNPLATED)
+    for (const o of (openRes.data || [])) {
+      if (!o.screw_id) continue
+      if (!prodMap[o.screw_id]) prodMap[o.screw_id] = { code: screwLookup[o.screw_id]?.code || '—', name: screwLookup[o.screw_id]?.name || '—', produced: 0 }
+      prodMap[o.screw_id].produced += o.quantity_nos
+      if (o.stock_type === 'PLATED') platedMap[o.screw_id] = (platedMap[o.screw_id] || 0) + o.quantity_nos
     }
 
     // Dispatched per screw (via order_items mapping)

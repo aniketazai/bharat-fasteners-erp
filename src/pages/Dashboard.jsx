@@ -402,7 +402,7 @@ export default function Dashboard() {
 
     const [
       oRes, cPRes, pPRes, dRes, lotRes, wireRes,
-      itmRes, platRes, s6Res, aPRes, dispInRes, convRes,
+      itmRes, platRes, s6Res, aPRes, dispInRes, convRes, fgOpenRes,
     ] = await Promise.all([
       mkOQ(),
       mkPQ().gte('entry_date', from).lte('entry_date', to),
@@ -417,6 +417,7 @@ export default function Dashboard() {
       supabase.from('dispatch_entries').select('dispatch_date,order_id,order_item_id,quantity_nos')
         .gte('dispatch_date', from).lte('dispatch_date', to),
       supabase.from('conversion_master').select('screw_id,conversion_ratio_per_kg'),
+      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type'),
     ])
 
     const allOrd  = oRes.data    || []
@@ -431,6 +432,7 @@ export default function Dashboard() {
     const aProd   = aPRes.data   || []
     const dispIn  = dispInRes.data || []
     const conv    = convRes.data   || []
+    const fgOpen  = fgOpenRes.data || []
 
     // conversion_master: screw_id → pcs per kg (ratio)
     const convMap = Object.fromEntries(conv.map(c => [c.screw_id, parseFloat(c.conversion_ratio_per_kg) || 0]))
@@ -485,6 +487,13 @@ export default function Dashboard() {
         screwInfo[it.screw_id] = { code: it.screw.screw_code || '—', name: it.screw.screw_name || '—' }
       }
     }
+    // Opening stock: add to produced and (if PLATED) to platRecvBySid
+    for (const o of fgOpen) {
+      if (!o.screw_id) continue
+      prodBySid[o.screw_id] = (prodBySid[o.screw_id] || 0) + o.quantity_nos
+      if (o.stock_type === 'PLATED') platRecvBySid[o.screw_id] = (platRecvBySid[o.screw_id] || 0) + o.quantity_nos
+    }
+
     const allFgSids = new Set([...Object.keys(prodBySid), ...Object.keys(dispBySid)])
     const fgStockList = [...allFgSids]
       .map(sid => {
