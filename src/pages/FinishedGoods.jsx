@@ -208,6 +208,31 @@ export default function FinishedGoods() {
               )
             })}
           </tbody>
+          {!loading && filtered.length > 0 && (() => {
+            const tot = filtered.reduce((acc, r) => ({
+              produced: acc.produced + r.produced,
+              plated: acc.plated + r.plated,
+              unplated: acc.unplated + r.unplated,
+              dispatched: acc.dispatched + r.dispatched,
+              fgStock: acc.fgStock + r.fgStock,
+            }), { produced: 0, plated: 0, unplated: 0, dispatched: 0, fgStock: 0 })
+            const td = (content, extra = {}) => (
+              <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 12, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...extra }}>{content}</td>
+            )
+            return (
+              <tfoot>
+                <tr>
+                  {td(`TOTAL — ${filtered.length} screws`, { colSpan: 3, fontSize: 11, letterSpacing: '.04em' })}
+                  {td(tot.produced.toLocaleString(), { textAlign: 'right', color: 'var(--muted)' })}
+                  {td(tot.plated.toLocaleString(), { textAlign: 'right', color: '#16A34A' })}
+                  {td(tot.unplated > 0 ? tot.unplated.toLocaleString() : '—', { textAlign: 'right', color: tot.unplated > 0 ? '#DC2626' : 'var(--dim)' })}
+                  {td(tot.dispatched > 0 ? tot.dispatched.toLocaleString() : '—', { textAlign: 'right', color: 'var(--muted)' })}
+                  {td(tot.fgStock.toLocaleString(), { textAlign: 'right', color: '#16A34A', fontSize: 14 })}
+                  {td('')}
+                </tr>
+              </tfoot>
+            )
+          })()}
         </table>
       </div>
     </div>

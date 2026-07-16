@@ -111,9 +111,9 @@ function Pulse({ h = 100 }) {
   )
 }
 
-function Card({ children, accent = C.orange }) {
+function Card({ children, accent = C.orange, id }) {
   return (
-    <div style={{
+    <div id={id} className="dash-card" style={{
       background: '#fff', border: '1px solid #E5E2DC', borderRadius: 12,
       marginBottom: 20, overflow: 'hidden', borderTop: `3px solid ${accent}`,
     }}>
@@ -122,7 +122,7 @@ function Card({ children, accent = C.orange }) {
   )
 }
 
-function CardHdr({ label, accent = C.orange, right, onExport }) {
+function CardHdr({ label, accent = C.orange, right, onExport, cardId }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   useEffect(() => {
@@ -130,6 +130,22 @@ function CardHdr({ label, accent = C.orange, right, onExport }) {
     document.addEventListener('mousedown', outside)
     return () => document.removeEventListener('mousedown', outside)
   }, [])
+  function printSection() {
+    setOpen(false)
+    if (cardId) {
+      document.querySelectorAll('.dash-card').forEach(el => el.classList.remove('print-target'))
+      const target = document.getElementById(cardId)
+      if (target) target.classList.add('print-target')
+      document.body.classList.add('print-one-card')
+    }
+    setTimeout(() => {
+      window.print()
+      setTimeout(() => {
+        document.body.classList.remove('print-one-card')
+        document.querySelectorAll('.dash-card').forEach(el => el.classList.remove('print-target'))
+      }, 500)
+    }, 50)
+  }
   const item = { display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', background: 'none', border: 'none', fontFamily: 'var(--cond)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text)', letterSpacing: '.04em' }
   return (
     <div style={{
@@ -153,10 +169,10 @@ function CardHdr({ label, accent = C.orange, right, onExport }) {
                   onMouseLeave={e => e.currentTarget.style.background = 'none'}>
                   📊 Excel (CSV)
                 </button>
-                <button onClick={() => { setOpen(false); setTimeout(() => window.print(), 50) }} style={item}
+                <button onClick={printSection} style={item}
                   onMouseEnter={e => e.currentTarget.style.background = 'var(--bg2)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'none'}>
-                  🖨️ Print / PDF
+                  🖨️ Print This Section
                 </button>
               </div>
             )}
@@ -242,7 +258,7 @@ function Empty({ msg = 'No data for this period', h = 180 }) {
   )
 }
 
-function MiniTable({ headers, rows, emptyMsg = 'No data.' }) {
+function MiniTable({ headers, rows, emptyMsg = 'No data.', footer }) {
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
@@ -269,6 +285,17 @@ function MiniTable({ headers, rows, emptyMsg = 'No data.' }) {
             </tr>
           ))}
         </tbody>
+        {footer && (
+          <tfoot>
+            <tr style={{ borderTop: '2px solid var(--border2)' }}>
+              {footer.map((cell, ci) => (
+                <td key={ci} style={{ padding: '6px 8px', textAlign: headers[ci]?.right ? 'right' : 'left', background: '#f5f4f2', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, color: cell?.color || 'var(--text)' }}>
+                  {cell?.label ?? cell}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        )}
       </table>
     </div>
   )
@@ -356,6 +383,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [d, setD]             = useState(null)
   const [exportOpen, setExportOpen] = useState(false)
+  const [fgListExpanded, setFgListExpanded] = useState(false)
   const exportRef = useRef(null)
 
   useEffect(() => {
@@ -367,7 +395,7 @@ export default function Dashboard() {
   useEffect(() => {
     Promise.all([
       supabase.from('customer_master').select('id,customer_name').eq('status','Active').order('customer_name'),
-      supabase.from('output_screw_master').select('id,screw_code').eq('status','Active').order('screw_code'),
+      supabase.from('output_screw_master').select('id,screw_code,screw_name').eq('status','Active').order('screw_code'),
       supabase.from('machines').select('id,machine_name,machine_code').eq('status','Active').order('machine_name'),
     ]).then(([c, s, m]) => {
       setCustomers(c.data || [])
@@ -378,6 +406,7 @@ export default function Dashboard() {
 
   const loadDash = useCallback(async () => {
     const machLookup = Object.fromEntries(machines.map(m => [m.id, m.machine_code || m.machine_name]))
+    const screwLookup = Object.fromEntries(screws.map(s => [s.id, { code: s.screw_code, name: s.screw_name || '—' }]))
     setLoading(true)
     const { from, to } = periodRange(applied.period, applied.customFrom, applied.customTo)
     const { from: pf, to: pt } = prevRange(from, to)
@@ -506,8 +535,8 @@ export default function Dashboard() {
         let status = 'UNPLATED'
         if (plated > 0) status = (plated + dispatched >= produced) ? 'PLATED' : 'PARTIAL'
         return {
-          code: screwInfo[sid]?.code || sid.slice(-6),
-          name: screwInfo[sid]?.name || '—',
+          code: screwInfo[sid]?.code || screwLookup[sid]?.code || sid.slice(-6),
+          name: screwInfo[sid]?.name || screwLookup[sid]?.name || '—',
           produced, plated, unplated, dispatched, inStock, status,
         }
       })
@@ -674,9 +703,8 @@ export default function Dashboard() {
     const fgProdBefore   = toPcs(aProdBefore)
     const fgDispBefore   = dispBefore.reduce((s, d) => s + (d.quantity_nos || 0), 0)
     const fgAtVendBefore = platBefore.reduce((s, p) => s + Math.max((p.sent_qty||0) - (p.received_qty||0), 0), 0)
-    const fgOpenStockBefore = fgOpen.filter(o => !o.entry_date || o.entry_date < from)
-      .reduce((s, o) => s + (o.stock_type === 'PLATED' ? o.quantity_nos : 0), 0)
-    const fgOpening      = Math.max(fgProdBefore - fgDispBefore - fgAtVendBefore, 0) + fgOpenStockBefore
+    const fgAllOpeningPlated = fgOpen.reduce((s, o) => s + (o.stock_type === 'PLATED' ? o.quantity_nos : 0), 0)
+    const fgOpening          = Math.max(fgProdBefore - fgDispBefore - fgAtVendBefore, 0) + fgAllOpeningPlated
     const fgProduced     = toPcs(aProdInPeriod)
     const fgDispatched   = dispIn.reduce((s, d) => s + (d.quantity_nos || 0), 0)
     const fgClosing      = Math.max(fgOpening + fgProduced - fgDispatched, 0)
@@ -821,8 +849,8 @@ export default function Dashboard() {
       <SlicerBar sl={sl} setSl={setSl} onApply={apply} onReset={reset} customers={customers} screws={screws} machines={machines} />
 
       {/* ═══════ SECTION 1 — OVERALL ANALYSIS ════════════════════════════════ */}
-      <Card accent={C.orange}>
-        <CardHdr label="Overall Analysis" accent={C.orange} right={d ? `${d.from} → ${d.to}` : 'Loading…'}
+      <Card accent={C.orange} id="card-overall">
+        <CardHdr label="Overall Analysis" accent={C.orange} right={d ? `${d.from} → ${d.to}` : 'Loading…'} cardId="card-overall"
           onExport={d ? () => downloadCSV('overall-analysis.csv',
             ['Metric', 'Value'],
             [
@@ -902,8 +930,8 @@ export default function Dashboard() {
       </Card>
 
       {/* ═══════ SECTION 2 — ORDER ANALYSIS ══════════════════════════════════ */}
-      <Card accent={C.blue}>
-        <CardHdr label="Order Analysis" accent={C.blue} right={d ? `${d.from} → ${d.to}` : ''}
+      <Card accent={C.blue} id="card-orders">
+        <CardHdr label="Order Analysis" accent={C.blue} right={d ? `${d.from} → ${d.to}` : ''} cardId="card-orders"
           onExport={d ? () => downloadCSV('order-analysis.csv',
             ['Order No', 'Customer', 'Status', 'Order Date', 'Due Date', 'Total Qty (pcs)', 'Dispatched (pcs)', 'Fulfillment %'],
             d.fulfillment.map(o => [o.order_no, o.customer?.customer_name || '—', o.status, o.order_date, o.due_date || '—', o.total, o.dispatched, o.pct])
@@ -973,8 +1001,8 @@ export default function Dashboard() {
       </Card>
 
       {/* ═══════ SECTION 3 — PRODUCTION ANALYSIS ════════════════════════════ */}
-      <Card accent={C.green}>
-        <CardHdr label="Production Analysis" accent={C.green} right={d ? `${d.from} → ${d.to}` : ''}
+      <Card accent={C.green} id="card-prod">
+        <CardHdr label="Production Analysis" accent={C.green} right={d ? `${d.from} → ${d.to}` : ''} cardId="card-prod"
           onExport={d ? () => downloadCSV('production-analysis.csv',
             ['Machine', 'Output (pcs)', 'Wire Used (kg)', 'Loss %', 'Efficiency %'],
             d.machBar.map(m => [m.name, m.output, m.kg, m.loss, m.eff])
@@ -1065,8 +1093,8 @@ export default function Dashboard() {
       </Card>
 
       {/* ═══════ SECTION 4 — RAW MATERIAL ANALYSIS ══════════════════════════ */}
-      <Card accent={C.teal}>
-        <CardHdr label="Raw Material Analysis" accent={C.teal}
+      <Card accent={C.teal} id="card-rm">
+        <CardHdr label="Raw Material Analysis" accent={C.teal} cardId="card-rm"
           onExport={d ? () => downloadCSV('rm-fg-analysis.csv',
             ['Type', 'Wire / Screw', 'Current Stock', 'Min Stock / At Vendor', 'Dispatched', 'Status / In Stock'],
             [
@@ -1101,30 +1129,65 @@ export default function Dashboard() {
             </div>
 
             {/* FG Stock List */}
-            <Box title="FG Stock — Plating Status by Screw" style={{ marginBottom: 12 }}>
-              <MiniTable
-                headers={[
-                  { label: 'Screw Code' }, { label: 'Screw Name' },
-                  { label: 'Produced', right: true }, { label: 'Plated', right: true },
-                  { label: 'Unplated', right: true }, { label: 'Dispatched', right: true },
-                  { label: 'FG Stock', right: true }, { label: 'Status' },
-                ]}
-                rows={(d.fgStockList || []).map(r => {
-                  const stColor = r.status === 'PLATED' ? C.green : r.status === 'PARTIAL' ? C.yellow : C.red
-                  return [
-                    { label: r.code, cond: true, bold: true },
-                    { label: r.name },
-                    { label: IN(r.produced), right: true, color: 'var(--muted)' },
-                    { label: r.plated > 0 ? IN(r.plated) : '—', right: true, color: r.plated > 0 ? C.green : 'var(--dim)' },
-                    { label: r.unplated > 0 ? IN(r.unplated) : '—', right: true, color: r.unplated > 0 ? C.red : 'var(--dim)' },
-                    { label: r.dispatched > 0 ? IN(r.dispatched) : '—', right: true, color: 'var(--muted)' },
-                    { label: r.inStock > 0 ? IN(r.inStock) : '—', right: true, bold: true, color: r.inStock > 0 ? C.green : 'var(--dim)' },
-                    <span key={r.code} style={{ fontSize: 9, fontFamily: 'var(--cond)', fontWeight: 700, letterSpacing: '.06em', padding: '2px 7px', borderRadius: 10, background: stColor + '18', color: stColor, border: `1px solid ${stColor}44` }}>{r.status}</span>,
-                  ]
-                })}
-                emptyMsg="No finished goods produced yet."
-              />
-            </Box>
+            {(() => {
+              const list = d.fgStockList || []
+              const SHOW = 10
+              const shown = fgListExpanded ? list : list.slice(0, SHOW)
+              const tot = list.reduce((acc, r) => ({
+                produced: acc.produced + r.produced,
+                plated: acc.plated + r.plated,
+                unplated: acc.unplated + r.unplated,
+                dispatched: acc.dispatched + r.dispatched,
+                inStock: acc.inStock + r.inStock,
+              }), { produced: 0, plated: 0, unplated: 0, dispatched: 0, inStock: 0 })
+              return (
+                <Box title={`FG Stock — Plating Status by Screw (${list.length} items)`} style={{ marginBottom: 12 }}>
+                  <MiniTable
+                    headers={[
+                      { label: 'Screw Code' }, { label: 'Screw Name' },
+                      { label: 'Produced', right: true }, { label: 'Plated', right: true },
+                      { label: 'Unplated', right: true }, { label: 'Dispatched', right: true },
+                      { label: 'FG Stock', right: true }, { label: 'Status' },
+                    ]}
+                    rows={shown.map(r => {
+                      const stColor = r.status === 'PLATED' ? C.green : r.status === 'PARTIAL' ? C.yellow : C.red
+                      return [
+                        { label: r.code, cond: true, bold: true },
+                        { label: r.name },
+                        { label: IN(r.produced), right: true, color: 'var(--muted)' },
+                        { label: r.plated > 0 ? IN(r.plated) : '—', right: true, color: r.plated > 0 ? C.green : 'var(--dim)' },
+                        { label: r.unplated > 0 ? IN(r.unplated) : '—', right: true, color: r.unplated > 0 ? C.red : 'var(--dim)' },
+                        { label: r.dispatched > 0 ? IN(r.dispatched) : '—', right: true, color: 'var(--muted)' },
+                        { label: r.inStock > 0 ? IN(r.inStock) : '—', right: true, bold: true, color: r.inStock > 0 ? C.green : 'var(--dim)' },
+                        <span key={r.code} style={{ fontSize: 9, fontFamily: 'var(--cond)', fontWeight: 700, letterSpacing: '.06em', padding: '2px 7px', borderRadius: 10, background: stColor + '18', color: stColor, border: `1px solid ${stColor}44` }}>{r.status}</span>,
+                      ]
+                    })}
+                    footer={list.length > 0 ? [
+                      { label: `TOTAL (${list.length})` },
+                      { label: '' },
+                      { label: IN(tot.produced), bold: true },
+                      { label: IN(tot.plated), bold: true, color: C.green },
+                      { label: tot.unplated > 0 ? IN(tot.unplated) : '—', bold: true, color: tot.unplated > 0 ? C.red : 'var(--dim)' },
+                      { label: tot.dispatched > 0 ? IN(tot.dispatched) : '—', bold: true, color: 'var(--muted)' },
+                      { label: IN(tot.inStock), bold: true, color: C.green },
+                      { label: '' },
+                    ] : undefined}
+                    emptyMsg="No finished goods produced yet."
+                  />
+                  {list.length > SHOW && (
+                    <button
+                      onClick={() => setFgListExpanded(e => !e)}
+                      className="no-print"
+                      style={{ display: 'block', width: '100%', marginTop: 8, padding: '7px', background: 'none', border: '1px dashed var(--border)', borderRadius: 6, color: 'var(--muted)', fontFamily: 'var(--cond)', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '.04em', transition: 'all .15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)' }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--muted)' }}
+                    >
+                      {fgListExpanded ? '▲ COLLAPSE TABLE' : `▼ SHOW ALL ${list.length} SCREWS`}
+                    </button>
+                  )}
+                </Box>
+              )
+            })()}
 
             <Box title="Stock Health">
               <MiniTable
@@ -1143,8 +1206,8 @@ export default function Dashboard() {
       </Card>
 
       {/* ═══════ SECTION 5 — DISPATCH ANALYSIS ══════════════════════════════ */}
-      <Card accent={C.purple}>
-        <CardHdr label="Dispatch Analysis" accent={C.purple} right={d ? `${d.from} → ${d.to}` : ''}
+      <Card accent={C.purple} id="card-dispatch">
+        <CardHdr label="Dispatch Analysis" accent={C.purple} right={d ? `${d.from} → ${d.to}` : ''} cardId="card-dispatch"
           onExport={d ? () => downloadCSV('dispatch-analysis.csv',
             ['Order No', 'Customer', 'Status', 'Due Date', 'Remaining (pcs)'],
             d.pendingDisp.map(o => [o.order_no, o.customer?.customer_name || '—', o.status, o.due_date || '—', o.remaining])
