@@ -181,10 +181,11 @@ export default function Orders() {
         order_date:  hdr.order_date || today(),
         customer_id: hdr.customer_id,
         due_date:    hdr.due_date || null,
-        invoice_no:  hdr.invoice_no.trim() || null,
         notes:       hdr.notes.trim() || null,
       }).eq('id', editId)
       if (hErr) { setErrors({ _: hErr.message }); setSaving(false); return }
+      // invoice_no saved separately (column may not exist yet — run ALTER TABLE orders ADD COLUMN invoice_no TEXT)
+      await supabase.from('orders').update({ invoice_no: hdr.invoice_no?.trim() || null }).eq('id', editId)
 
       const curIds = new Set(items.filter(i => i.id).map(i => i.id))
       const toDelete = origItems.filter(oi => !curIds.has(oi.id) && oi.dispatched_qty === 0).map(oi => oi.id)
@@ -217,7 +218,6 @@ export default function Orders() {
         order_date:  hdr.order_date || today(),
         customer_id: hdr.customer_id,
         due_date:    hdr.due_date || null,
-        invoice_no:  hdr.invoice_no.trim() || null,
         notes:       hdr.notes.trim() || null,
         created_by:  user?.id,
       }).select()
@@ -229,6 +229,8 @@ export default function Orders() {
         wire_id:   i.wire_id || null,
         order_qty: parseInt(i.order_qty),
       })))
+      // invoice_no saved separately (column may not exist yet)
+      if (hdr.invoice_no?.trim()) await supabase.from('orders').update({ invoice_no: hdr.invoice_no.trim() }).eq('id', data[0].id)
     }
 
     setSaving(false)
@@ -243,8 +245,10 @@ export default function Orders() {
 
   async function deleteOrder(o) {
     if (!window.confirm(`Delete order ${o.order_no}? This cannot be undone.`)) return
+    await supabase.from('dispatch_entries').delete().eq('order_id', o.id)
     await supabase.from('order_items').delete().eq('order_id', o.id)
-    await supabase.from('orders').delete().eq('id', o.id)
+    const { error } = await supabase.from('orders').delete().eq('id', o.id)
+    if (error) { alert('Delete failed: ' + error.message); return }
     load()
   }
 
@@ -385,14 +389,14 @@ export default function Orders() {
                           <td>
                             {locked
                               ? <span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 12 }}>
-                                  {screws.find(s => s.id === item.screw_id)?.screw_code || '—'}
+                                  {screws.find(s => s.id === item.screw_id)?.screw_name || '—'}
                                   <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 5 }}>●dispatched</span>
                                 </span>
                               : <select className={errors[`s${i}`] ? 'error' : ''} value={item.screw_id}
                                   onChange={e => setItemField(i, 'screw_id', e.target.value)}
                                   style={{ width: '100%' }}>
                                   <option value="">— Select screw —</option>
-                                  {screws.map(s => <option key={s.id} value={s.id}>{s.screw_code} – {s.screw_name}</option>)}
+                                  {screws.map(s => <option key={s.id} value={s.id}>{s.screw_name}</option>)}
                                 </select>
                             }
                             {errors[`s${i}`] && <span className="field-error">{errors[`s${i}`]}</span>}
