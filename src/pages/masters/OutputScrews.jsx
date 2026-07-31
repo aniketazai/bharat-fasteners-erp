@@ -6,17 +6,14 @@ const EMPTY_FORM = { screw_name: '', wire_id: '', conversion_ratio_per_kg: '' }
 
 function wireLabel(w) { return w ? `${w.diameter_mm}mm – ${w.grade}` : '—' }
 
-// Screw code is still stored on every record (other pages like Orders,
-// Plating, Production, Dispatch and Finished Goods all key off it), but the
-// user never sees or types it — it's generated automatically here.
-async function nextScrewCode() {
-  const { data } = await supabase.from('output_screw_master').select('screw_code')
-  let max = 0
-  for (const row of data || []) {
-    const m = row.screw_code?.match(/^SCW-(\d+)$/)
-    if (m) max = Math.max(max, parseInt(m[1], 10))
-  }
-  return `SCW-${String(max + 1).padStart(4, '0')}`
+// Screw code is still stored on every record (Orders, Plating, Production,
+// Dispatch and Finished Goods all key off it), but it's never shown or typed
+// separately here — it's just set to match the screw name, so there's only
+// one thing to manage: the name.
+function isDupName(records, name, excludeId = null) {
+  return records.some(
+    r => r.id !== excludeId && r.screw_name.trim().toLowerCase() === name.trim().toLowerCase()
+  )
 }
 
 export default function OutputScrews() {
@@ -59,9 +56,10 @@ export default function OutputScrews() {
     setLoading(false)
   }
 
-  function validate(data) {
+  function validate(data, excludeId = null) {
     const errs = {}
-    if (!data.screw_name.trim()) errs.screw_name = 'Screw name is required.'
+    if (!data.screw_name.trim())                        errs.screw_name = 'Screw name is required.'
+    else if (isDupName(records, data.screw_name, excludeId)) errs.screw_name = 'A screw with this name already exists.'
     if (data.conversion_ratio_per_kg) {
       const ratio = parseFloat(data.conversion_ratio_per_kg)
       if (isNaN(ratio) || ratio <= 0) errs.conversion_ratio_per_kg = 'Ratio must be > 0.'
@@ -105,9 +103,8 @@ export default function OutputScrews() {
     if (Object.keys(errs).length) { setFormErrors(errs); return }
 
     setSaving(true)
-    const code = await nextScrewCode()
     const { data, error } = await supabase.from('output_screw_master').insert({
-      screw_code: code,
+      screw_code: form.screw_name.trim(),
       screw_name: form.screw_name.trim(),
       created_by: user?.id,
     }).select()
@@ -136,10 +133,11 @@ export default function OutputScrews() {
   }
 
   async function handleEditSave(id) {
-    const errs = validate(editData)
+    const errs = validate(editData, id)
     if (Object.keys(errs).length) { setEditErrors(errs); return }
 
     const { error } = await supabase.from('output_screw_master').update({
+      screw_code: editData.screw_name.trim(),
       screw_name: editData.screw_name.trim(),
     }).eq('id', id)
     if (error) { setEditErrors({ screw_name: error.message }); return }
