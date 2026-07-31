@@ -65,7 +65,7 @@ export default function Orders() {
       supabase.from('rm_wire_master').select('id,diameter_mm,grade').order('diameter_mm'),
       supabase.from('conversion_master').select('screw_id,wire_id,conversion_ratio_per_kg'),
       supabase.from('production_entries').select('screw_id, output_nos'),
-      supabase.from('plating_entries').select('screw_id, received_qty'),
+      supabase.from('plating_entries').select('screw_id, received_qty_nos'),
       supabase.from('fg_opening_stock').select('screw_id, quantity_nos, stock_type'),
     ])
 
@@ -107,7 +107,7 @@ export default function Orders() {
     const plated = {}
     for (const p of (platRes.data || [])) {
       if (!p.screw_id) continue
-      plated[p.screw_id] = (plated[p.screw_id] || 0) + (p.received_qty || 0)
+      plated[p.screw_id] = (plated[p.screw_id] || 0) + (p.received_qty_nos || 0)
     }
     for (const o of (openRes.data || [])) {
       if (!o.screw_id) continue
