@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 
-const EMPTY_FORM = { screw_code: '', screw_name: '' }
+const EMPTY_FORM = { screw_code: '', screw_name: '', wire_id: '', conversion_ratio_per_kg: '' }
+
+function wireLabel(w) { return w ? `${w.diameter_mm}mm – ${w.grade}` : '—' }
 
 export default function OutputScrews() {
   const { user } = useAuth()
   const [records, setRecords]       = useState([])
+  const [wires, setWires]           = useState([])
+  const [convByScrew, setConvByScrew] = useState({}) // screw_id -> conversion_master row (matching rm_wire_id)
   const [loading, setLoading]       = useState(true)
   const [showForm, setShowForm]     = useState(false)
   const [form, setForm]             = useState(EMPTY_FORM)
@@ -21,11 +25,24 @@ export default function OutputScrews() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase
-      .from('output_screw_master')
-      .select('*')
-      .order('screw_code')
-    setRecords(data || [])
+    const [screwRes, wireRes, convRes] = await Promise.all([
+      supabase.from('output_screw_master').select('*').order('screw_code'),
+      supabase.from('rm_wire_master').select('id, diameter_mm, grade').eq('status', 'Active').order('diameter_mm'),
+      supabase.from('conversion_master').select('*'),
+    ])
+    const screws = screwRes.data || []
+    const conv   = convRes.data || []
+    // For each screw, find the conversion_master row matching its default wire
+    // (rm_wire_id) so the ratio shown here lines up with the wire type shown here.
+    const map = {}
+    for (const s of screws) {
+      if (s.rm_wire_id) {
+        map[s.id] = conv.find(c => c.screw_id === s.id && c.wire_id === s.rm_wire_id) || null
+      }
+    }
+    setRecords(screws)
+    setWires(wireRes.data || [])
+    setConvByScrew(map)
     setLoading(false)
   }
 
@@ -40,7 +57,41 @@ export default function OutputScrews() {
     if (!data.screw_code.trim())                   errs.screw_code = 'Screw code is required.'
     else if (isDupCode(data.screw_code, excludeId)) errs.screw_code = 'Screw code already exists.'
     if (!data.screw_name.trim())                   errs.screw_name = 'Screw name is required.'
+    if (data.conversion_ratio_per_kg) {
+      const ratio = parseFloat(data.conversion_ratio_per_kg)
+      if (isNaN(ratio) || ratio <= 0) errs.conversion_ratio_per_kg = 'Ratio must be > 0.'
+      if (!data.wire_id) errs.wire_id = 'Select a wire type to go with the ratio.'
+    }
     return errs
+  }
+
+  // Saves the screw's wire type (rm_wire_id) and, if given, upserts the
+  // matching conversion_master row so the nos/kg ratio travels with it.
+  async function saveWireAndConversion(screwId, wireId, ratio) {
+    await supabase.from('output_screw_master').update({ rm_wire_id: wireId || null }).eq('id', screwId)
+
+    if (!wireId || !ratio) return null
+    const { data: existing } = await supabase
+      .from('conversion_master')
+      .select('id')
+      .eq('screw_id', screwId)
+      .eq('wire_id', wireId)
+      .maybeSingle()
+
+    if (existing) {
+      const { error } = await supabase.from('conversion_master')
+        .update({ conversion_ratio_per_kg: parseFloat(ratio) })
+        .eq('id', existing.id)
+      return error
+    } else {
+      const { error } = await supabase.from('conversion_master').insert({
+        screw_id: screwId,
+        wire_id: wireId,
+        conversion_ratio_per_kg: parseFloat(ratio),
+        created_by: user?.id,
+      })
+      return error
+    }
   }
 
   async function handleAdd(e) {
@@ -49,13 +100,19 @@ export default function OutputScrews() {
     if (Object.keys(errs).length) { setFormErrors(errs); return }
 
     setSaving(true)
-    const { error } = await supabase.from('output_screw_master').insert({
+    const { data, error } = await supabase.from('output_screw_master').insert({
       screw_code: form.screw_code.trim().toUpperCase(),
       screw_name: form.screw_name.trim(),
       created_by: user?.id,
-    })
+    }).select()
+    if (error || !data?.length) { setSaving(false); setFormErrors({ screw_code: error?.message || 'Failed to create screw.' }); return }
+
+    if (form.wire_id) {
+      const convErr = await saveWireAndConversion(data[0].id, form.wire_id, form.conversion_ratio_per_kg)
+      if (convErr) { setSaving(false); setFormErrors({ wire_id: convErr.message }); return }
+    }
+
     setSaving(false)
-    if (error) { setFormErrors({ screw_code: error.message }); return }
     setForm(EMPTY_FORM)
     setShowForm(false)
     load()
@@ -63,7 +120,13 @@ export default function OutputScrews() {
 
   function startEdit(row) {
     setEditId(row.id)
-    setEditData({ screw_code: row.screw_code, screw_name: row.screw_name })
+    const conv = convByScrew[row.id]
+    setEditData({
+      screw_code: row.screw_code,
+      screw_name: row.screw_name,
+      wire_id: row.rm_wire_id || '',
+      conversion_ratio_per_kg: conv ? String(conv.conversion_ratio_per_kg) : '',
+    })
     setEditErrors({})
   }
 
@@ -76,6 +139,10 @@ export default function OutputScrews() {
       screw_name: editData.screw_name.trim(),
     }).eq('id', id)
     if (error) { setEditErrors({ screw_code: error.message }); return }
+
+    const convErr = await saveWireAndConversion(id, editData.wire_id, editData.conversion_ratio_per_kg)
+    if (convErr) { setEditErrors({ wire_id: convErr.message }); return }
+
     setEditId(null)
     load()
   }
@@ -94,6 +161,8 @@ export default function OutputScrews() {
         r.screw_name.toLowerCase().includes(search.toLowerCase())
       )
     : records
+
+  const wireMap = Object.fromEntries(wires.map(w => [w.id, w]))
 
   return (
     <div className="main page-enter">
@@ -161,6 +230,33 @@ export default function OutputScrews() {
                 />
                 {formErrors.screw_name && <span className="field-error">{formErrors.screw_name}</span>}
               </div>
+              <div className="form-group">
+                <label>Wire Type</label>
+                <select
+                  className={formErrors.wire_id ? 'error' : ''}
+                  value={form.wire_id}
+                  onChange={e => setForm(f => ({ ...f, wire_id: e.target.value }))}
+                >
+                  <option value="">— Select wire —</option>
+                  {wires.map(w => (
+                    <option key={w.id} value={w.id}>{wireLabel(w)}</option>
+                  ))}
+                </select>
+                {formErrors.wire_id && <span className="field-error">{formErrors.wire_id}</span>}
+              </div>
+              <div className="form-group">
+                <label>Conversion Ratio (nos/kg)</label>
+                <input
+                  type="number" step="0.01" min="0.01"
+                  className={formErrors.conversion_ratio_per_kg ? 'error' : ''}
+                  value={form.conversion_ratio_per_kg}
+                  onChange={e => setForm(f => ({ ...f, conversion_ratio_per_kg: e.target.value }))}
+                  placeholder="e.g. 800"
+                />
+                {formErrors.conversion_ratio_per_kg && (
+                  <span className="field-error">{formErrors.conversion_ratio_per_kg}</span>
+                )}
+              </div>
             </div>
             <div className="form-actions">
               <button className="btn-add" type="submit" disabled={saving}>
@@ -185,14 +281,16 @@ export default function OutputScrews() {
               <th style={{ width: 40 }}>#</th>
               <th>Code</th>
               <th>Screw Name</th>
+              <th>Wire Type</th>
+              <th>Conversion (nos/kg)</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={5} className="empty">Loading…</td></tr>}
+            {loading && <tr><td colSpan={7} className="empty">Loading…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={5} className="empty">
+              <tr><td colSpan={7} className="empty">
                 {search ? 'No screws match your search.' : 'No screws found.'}
               </td></tr>
             )}
@@ -220,6 +318,31 @@ export default function OutputScrews() {
                       {editErrors.screw_name && <div className="field-error">{editErrors.screw_name}</div>}
                     </td>
                     <td>
+                      <select
+                        className={`mri-sel${editErrors.wire_id ? ' error' : ''}`}
+                        value={editData.wire_id}
+                        onChange={e => setEditData(d => ({ ...d, wire_id: e.target.value }))}
+                        style={{ minWidth: 130 }}
+                      >
+                        <option value="">— none —</option>
+                        {wires.map(w => (
+                          <option key={w.id} value={w.id}>{wireLabel(w)}</option>
+                        ))}
+                      </select>
+                      {editErrors.wire_id && <div className="field-error">{editErrors.wire_id}</div>}
+                    </td>
+                    <td>
+                      <input
+                        type="number" step="0.01" min="0.01"
+                        className={`mri${editErrors.conversion_ratio_per_kg ? ' error' : ''}`}
+                        value={editData.conversion_ratio_per_kg}
+                        onChange={e => setEditData(d => ({ ...d, conversion_ratio_per_kg: e.target.value }))}
+                        style={{ width: 90 }}
+                        placeholder="e.g. 800"
+                      />
+                      {editErrors.conversion_ratio_per_kg && <div className="field-error">{editErrors.conversion_ratio_per_kg}</div>}
+                    </td>
+                    <td>
                       <span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>{row.status}</span>
                     </td>
                     <td>
@@ -233,6 +356,12 @@ export default function OutputScrews() {
                   <>
                     <td className="num-cell">{row.screw_code}</td>
                     <td>{row.screw_name}</td>
+                    <td style={{ fontSize: 12 }}>{wireLabel(wireMap[row.rm_wire_id])}</td>
+                    <td className="num-cell">
+                      {convByScrew[row.id]
+                        ? <>{convByScrew[row.id].conversion_ratio_per_kg}<span className="unit">nos/kg</span></>
+                        : '—'}
+                    </td>
                     <td><span className={`badge ${row.status === 'Active' ? 'b-ok' : 'b-warn'}`}>{row.status}</span></td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
