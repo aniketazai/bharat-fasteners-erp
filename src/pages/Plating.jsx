@@ -88,7 +88,11 @@ function ScrewCombobox({ screws, value, onChange, hasError }) {
   )
 }
 
-function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedScrews, platTypes, loading, title, accentColor }) {
+function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedScrews, platTypes, loading, title, accentColor, ratioMap }) {
+  const ratio = ratioMap[form.screw_id]
+  const kgVal = parseFloat(form.sent_qty)
+  const nosPreview = ratio && !isNaN(kgVal) && kgVal > 0 ? Math.round(kgVal * ratio) : null
+
   return (
     <div className="form-card" style={{ borderLeftColor: accentColor }}>
       <div className="form-title" style={{ color: accentColor }}>{title}</div>
@@ -134,6 +138,16 @@ function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedS
               onChange={e => setForm(f => ({ ...f, sent_qty: e.target.value }))}
               placeholder="e.g. 12.50" />
             {errors.sent_qty && <span className="field-error">{errors.sent_qty}</span>}
+            {form.screw_id && !ratio && (
+              <span style={{ fontSize: 11, color: 'var(--orange)', marginTop: 2, display: 'block' }}>
+                No conversion ratio set for this screw — set it in Output Screws to auto-convert to nos.
+              </span>
+            )}
+            {nosPreview != null && (
+              <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, marginTop: 2, display: 'block' }}>
+                ≈ {nosPreview.toLocaleString()} nos
+              </span>
+            )}
           </div>
           <div className="form-group">
             <label>Vendor Name</label>
@@ -175,6 +189,7 @@ export default function Plating() {
   const [screws, setScrews]           = useState([])
   const [producedIds, setProducedIds] = useState(new Set())
   const [platTypes, setPlatTypes]     = useState([])
+  const [ratioMap, setRatioMap]       = useState({}) // screw_id → conversion_ratio_per_kg (nos/kg)
   const [loading, setLoading]         = useState(true)
 
   // Create form
@@ -200,18 +215,30 @@ export default function Plating() {
 
   async function load() {
     setLoading(true)
-    const [eRes, sRes, pRes, prodRes] = await Promise.all([
+    const [eRes, sRes, pRes, prodRes, convRes] = await Promise.all([
       supabase.from('plating_entries')
         .select('*, screw:screw_id(screw_code,screw_name), plating_type:plating_type_id(plating_name)')
         .order('created_at', { ascending: false }),
-      supabase.from('output_screw_master').select('id,screw_code,screw_name').eq('status', 'Active').order('screw_code'),
+      supabase.from('output_screw_master').select('id,screw_code,screw_name,rm_wire_id').eq('status', 'Active').order('screw_code'),
       supabase.from('plating_type_master').select('id,plating_name').eq('status', 'Active').order('plating_name'),
       supabase.from('production_entries').select('screw_id'),
+      supabase.from('conversion_master').select('screw_id,wire_id,conversion_ratio_per_kg'),
     ])
     setEntries(eRes.data || [])
     setScrews(sRes.data || [])
     setPlatTypes(pRes.data || [])
     setProducedIds(new Set((prodRes.data || []).map(r => r.screw_id)))
+
+    // Ratio per screw, preferring the conversion row that matches the screw's
+    // default wire (rm_wire_id), falling back to any conversion on record.
+    const screwWire = Object.fromEntries((sRes.data || []).map(s => [s.id, s.rm_wire_id]))
+    const rm = {}
+    for (const cv of (convRes.data || [])) {
+      if (!cv.conversion_ratio_per_kg) continue
+      if (cv.wire_id === screwWire[cv.screw_id] || !rm[cv.screw_id]) rm[cv.screw_id] = cv.conversion_ratio_per_kg
+    }
+    setRatioMap(rm)
+
     setLoading(false)
   }
 
@@ -240,12 +267,14 @@ export default function Plating() {
     const errs = validate(form)
     if (Object.keys(errs).length) { setErrors(errs); return }
     setSaving(true)
+    const ratio = ratioMap[form.screw_id] || null
     const { error } = await supabase.from('plating_entries').insert({
       lot_no:               form.lot_no.trim().toUpperCase(),
       send_date:            form.send_date || today(),
       plating_type_id:      form.plating_type_id,
       screw_id:             form.screw_id,
       sent_qty:             parseFloat(form.sent_qty),
+      sent_qty_nos:         ratio ? Math.round(parseFloat(form.sent_qty) * ratio) : null,
       vendor_name:          form.vendor_name.trim() || null,
       vendor_challan_no:    form.vendor_challan_no.trim() || null,
       expected_return_date: form.expected_return_date || null,
@@ -281,12 +310,14 @@ export default function Plating() {
     const errs = validate(editForm)
     if (Object.keys(errs).length) { setEditErrs(errs); return }
     setEditSav(true)
+    const ratio = ratioMap[editForm.screw_id] || null
     const { error } = await supabase.from('plating_entries').update({
       lot_no:               editForm.lot_no.trim().toUpperCase(),
       send_date:            editForm.send_date || today(),
       plating_type_id:      editForm.plating_type_id,
       screw_id:             editForm.screw_id,
       sent_qty:             parseFloat(editForm.sent_qty),
+      sent_qty_nos:         ratio ? Math.round(parseFloat(editForm.sent_qty) * ratio) : null,
       vendor_name:          editForm.vendor_name.trim() || null,
       vendor_challan_no:    editForm.vendor_challan_no.trim() || null,
       expected_return_date: editForm.expected_return_date || null,
@@ -315,9 +346,17 @@ export default function Plating() {
     if (!recData.received_qty || isNaN(qty) || qty <= 0) errs.received_qty = 'Enter quantity (kg).'
     else if (qty > remaining + 0.0001) errs.received_qty = `Max ${remaining.toFixed(3)} kg remaining.`
     if (Object.keys(errs).length) { setRecErr(errs); return }
+
+    const ratio = ratioMap[entry.screw_id] || null
+    const newReceivedKg  = +(existing + qty).toFixed(3)
+    const newReceivedNos = ratio
+      ? Math.round(newReceivedKg * ratio)
+      : (entry.received_qty_nos || null) // no ratio on record — leave nos untouched rather than guess
+
     await supabase.from('plating_entries').update({
-      receive_date: recData.receive_date || today(),
-      received_qty: +(existing + qty).toFixed(3),
+      receive_date:     recData.receive_date || today(),
+      received_qty:     newReceivedKg,
+      received_qty_nos: newReceivedNos,
     }).eq('id', entry.id)
     setReceiveId(null)
     setRecData({ receive_date: today(), received_qty: '' })
@@ -390,6 +429,7 @@ export default function Plating() {
           loading={loading}
           title="SEND TO PLATING"
           accentColor="var(--accent)"
+          ratioMap={ratioMap}
         />
       )}
 
@@ -404,6 +444,7 @@ export default function Plating() {
           loading={loading}
           title={`EDIT — ${editForm.lot_no}`}
           accentColor="var(--blue)"
+          ratioMap={ratioMap}
         />
       )}
 
@@ -420,15 +461,17 @@ export default function Plating() {
               <th>Challan No</th>
               <th>Exp. Return</th>
               <th style={{ textAlign: 'right' }}>Sent (kg)</th>
+              <th style={{ textAlign: 'right' }}>Sent (nos)</th>
               <th style={{ textAlign: 'right' }}>Received (kg)</th>
+              <th style={{ textAlign: 'right' }}>Received (nos)</th>
               <th>Receive Date</th>
               <th>Status</th>
               <th data-no-export>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={13} className="empty">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={13} className="empty">No plating entries yet.</td></tr>}
+            {loading && <tr><td colSpan={15} className="empty">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={15} className="empty">No plating entries yet.</td></tr>}
             {filtered.map((e, i) => {
               const st      = lotStatus(e)
               const overdue = e.expected_return_date && !e.received_qty && new Date(e.expected_return_date) < new Date()
@@ -453,8 +496,14 @@ export default function Plating() {
                   <td className="num-cell" style={{ textAlign: 'right' }}>
                     {parseFloat(e.sent_qty).toFixed(2)}
                   </td>
+                  <td className="num-cell" style={{ textAlign: 'right', color: 'var(--muted)' }}>
+                    {e.sent_qty_nos != null ? e.sent_qty_nos.toLocaleString() : '—'}
+                  </td>
                   <td className="num-cell" style={{ textAlign: 'right', color: e.received_qty != null ? 'var(--green)' : 'var(--dim)' }}>
                     {e.received_qty != null ? parseFloat(e.received_qty).toFixed(2) : '—'}
+                  </td>
+                  <td className="num-cell" style={{ textAlign: 'right', color: e.received_qty_nos != null ? 'var(--green)' : 'var(--dim)', fontWeight: 700 }}>
+                    {e.received_qty_nos != null ? e.received_qty_nos.toLocaleString() : '—'}
                   </td>
                   <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.receive_date || '—'}</td>
                   <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
@@ -480,6 +529,11 @@ export default function Plating() {
                             <input type="number" step="0.001" className="mri" style={{ width: 80 }} value={recData.received_qty}
                               onChange={ev => setRecData(d => ({ ...d, received_qty: ev.target.value }))}
                               placeholder={`max ${(parseFloat(e.sent_qty) - parseFloat(e.received_qty || 0)).toFixed(2)}`} />
+                            {ratioMap[e.screw_id] && recData.received_qty && !isNaN(parseFloat(recData.received_qty)) && (
+                              <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>
+                                ≈ {Math.round(parseFloat(recData.received_qty) * ratioMap[e.screw_id]).toLocaleString()} nos
+                              </span>
+                            )}
                             {recErr.received_qty && <span className="field-error">{recErr.received_qty}</span>}
                             <button className="btn-add" style={{ fontSize: 10, padding: '5px 10px' }} onClick={() => handleReceive(e)}>OK</button>
                             <button className="btn-clear" style={{ fontSize: 10, padding: '5px 8px' }} onClick={() => { setReceiveId(null); setRecErr({}) }}>✕</button>
@@ -508,15 +562,19 @@ export default function Plating() {
             })}
           </tbody>
           {!loading && filtered.length > 0 && (() => {
-            const tSent = filtered.reduce((s, e) => s + (parseFloat(e.sent_qty) || 0), 0)
-            const tRecv = filtered.reduce((s, e) => s + (parseFloat(e.received_qty) || 0), 0)
+            const tSent    = filtered.reduce((s, e) => s + (parseFloat(e.sent_qty) || 0), 0)
+            const tRecv    = filtered.reduce((s, e) => s + (parseFloat(e.received_qty) || 0), 0)
+            const tSentN   = filtered.reduce((s, e) => s + (e.sent_qty_nos || 0), 0)
+            const tRecvN   = filtered.reduce((s, e) => s + (e.received_qty_nos || 0), 0)
             const TFD = (c, ex = {}) => <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 11, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...ex }}>{c}</td>
             return (
               <tfoot>
                 <tr>
                   {TFD(`TOTAL — ${filtered.length} lots`, { colSpan: 8, letterSpacing: '.04em' })}
                   {TFD(tSent.toFixed(2), { textAlign: 'right' })}
+                  {TFD(tSentN > 0 ? tSentN.toLocaleString() : '—', { textAlign: 'right', color: 'var(--muted)' })}
                   {TFD(tRecv > 0 ? tRecv.toFixed(2) : '—', { textAlign: 'right', color: tRecv > 0 ? 'var(--green)' : 'var(--dim)' })}
+                  {TFD(tRecvN > 0 ? tRecvN.toLocaleString() : '—', { textAlign: 'right', color: tRecvN > 0 ? 'var(--green)' : 'var(--dim)' })}
                   {TFD('', { colSpan: 3 })}
                 </tr>
               </tfoot>
