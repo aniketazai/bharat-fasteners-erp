@@ -163,9 +163,9 @@ export default function Dispatch() {
     if (item?.screw_id) {
       const [platRes, orderItemRes, openRes] = await Promise.all([
         supabase.from('plating_entries')
-          .select('received_qty')
+          .select('received_qty_nos')
           .eq('screw_id', item.screw_id)
-          .not('received_qty', 'is', null),
+          .not('received_qty_nos', 'is', null),
         supabase.from('order_items')
           .select('dispatched_qty')
           .eq('screw_id', item.screw_id),
@@ -174,7 +174,7 @@ export default function Dispatch() {
           .eq('screw_id', item.screw_id)
           .eq('stock_type', 'PLATED'),
       ])
-      const platReceived    = (platRes.data  || []).reduce((s, p) => s + (p.received_qty  || 0), 0)
+      const platReceived    = (platRes.data  || []).reduce((s, p) => s + (p.received_qty_nos  || 0), 0)
       const openingPlated   = (openRes.data  || []).reduce((s, o) => s + (o.quantity_nos  || 0), 0)
       const totalReceived   = platReceived + openingPlated
       const totalDispatched = (orderItemRes.data || []).reduce((s, i) => s + (i.dispatched_qty || 0), 0)
