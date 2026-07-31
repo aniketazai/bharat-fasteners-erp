@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 function downloadCSV(filename, headers, rows) {
@@ -19,6 +20,8 @@ const ST = {
 
 export default function FinishedGoods() {
   const [rows, setRows]       = useState([])
+  const [ordersByScrew, setOrdersByScrew] = useState({}) // screw_id → [{order_no, customer_name, remaining}, ...]
+  const [expanded, setExpanded] = useState({}) // screw_id → bool
   const [loading, setLoading] = useState(true)
   const [filter, setFilter]   = useState('All')
 
@@ -26,7 +29,7 @@ export default function FinishedGoods() {
 
   async function load() {
     setLoading(true)
-    const [prodRes, platRes, orderItemRes, dispRes, openRes, screwRes] = await Promise.all([
+    const [prodRes, platRes, orderItemRes, dispRes, openRes, screwRes, openOrderItemsRes] = await Promise.all([
       supabase.from('production_entries')
         .select('screw_id, output_nos, screw:screw_id(screw_code, screw_name)'),
       supabase.from('plating_entries')
@@ -39,6 +42,10 @@ export default function FinishedGoods() {
         .select('screw_id, quantity_nos, stock_type'),
       supabase.from('output_screw_master')
         .select('id, screw_code, screw_name'),
+      // Order items with their parent order — filtered to open ones client-side
+      // below (Supabase's embedded-resource filtering isn't reliable here).
+      supabase.from('order_items')
+        .select('screw_id, order_qty, dispatched_qty, order:order_id(order_no, status, customer:customer_id(customer_name))'),
     ])
 
     // Screw lookup
@@ -94,8 +101,32 @@ export default function FinishedGoods() {
       return { sid, code: prodMap[sid].code, name: prodMap[sid].name, produced, plated, unplated, dispatched, fgStock, status }
     }).sort((a, b) => b.fgStock - a.fgStock)
 
+    // Group open orders per screw so FG stock can be traced back to what it's
+    // waiting on. Plating itself isn't order-specific, so this is "which open
+    // orders need this screw", not a strict reservation of stock.
+    const obs = {}
+    for (const it of (openOrderItemsRes.data || [])) {
+      if (!it.screw_id || !it.order) continue
+      if (!['Open', 'In Progress', 'Partial'].includes(it.order.status)) continue
+      const remaining = Math.max((it.order_qty || 0) - (it.dispatched_qty || 0), 0)
+      if (remaining <= 0) continue
+      if (!obs[it.screw_id]) obs[it.screw_id] = []
+      obs[it.screw_id].push({
+        order_no: it.order.order_no,
+        customer_name: it.order.customer?.customer_name || '—',
+        order_qty: it.order_qty || 0,
+        dispatched_qty: it.dispatched_qty || 0,
+        remaining,
+      })
+    }
+    setOrdersByScrew(obs)
+
     setRows(result)
     setLoading(false)
+  }
+
+  function toggleExpand(sid) {
+    setExpanded(prev => ({ ...prev, [sid]: !prev[sid] }))
   }
 
   const counts = { PLATED: 0, PARTIAL: 0, UNPLATED: 0 }
@@ -159,6 +190,7 @@ export default function FinishedGoods() {
         <table data-export>
           <thead>
             <tr>
+              <th style={{ width: 24 }} data-no-export></th>
               <th style={{ width: 36 }}>#</th>
               <th>Screw Code</th>
               <th>Screw Name</th>
@@ -168,15 +200,27 @@ export default function FinishedGoods() {
               <th style={{ textAlign: 'right' }}>Dispatched</th>
               <th style={{ textAlign: 'right' }}>FG Stock</th>
               <th>Status</th>
+              <th style={{ textAlign: 'right' }}>Open Orders</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={9} className="empty">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={9} className="empty">No finished goods yet.</td></tr>}
+            {loading && <tr><td colSpan={11} className="empty">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={11} className="empty">No finished goods yet.</td></tr>}
             {filtered.map((r, i) => {
               const s = ST[r.status]
+              const waitingOrders = ordersByScrew[r.sid] || []
+              const isExp = !!expanded[r.sid]
               return (
-                <tr key={r.sid}>
+                <Fragment key={r.sid}>
+                <tr>
+                  <td>
+                    {waitingOrders.length > 0 && (
+                      <button onClick={() => toggleExpand(r.sid)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--muted)', display: 'flex', alignItems: 'center' }}>
+                        <ChevronDown size={13} style={{ transition: 'transform .2s', transform: isExp ? 'rotate(180deg)' : 'none' }} />
+                      </button>
+                    )}
+                  </td>
                   <td style={{ color: 'var(--dim)', fontSize: 11 }}>{i + 1}</td>
                   <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13 }}>{r.code}</span></td>
                   <td style={{ fontSize: 12, color: 'var(--muted)' }}>{r.name}</td>
@@ -204,7 +248,58 @@ export default function FinishedGoods() {
                       {r.status}
                     </span>
                   </td>
+                  <td style={{ textAlign: 'right', fontSize: 12 }}>
+                    {waitingOrders.length > 0
+                      ? <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                          {waitingOrders.reduce((s, w) => s + w.remaining, 0).toLocaleString()}
+                          <span style={{ fontWeight: 400, color: 'var(--muted)', marginLeft: 4 }}>
+                            ({waitingOrders.length} order{waitingOrders.length !== 1 ? 's' : ''})
+                          </span>
+                        </span>
+                      : <span style={{ color: 'var(--dim)' }}>—</span>}
+                  </td>
                 </tr>
+
+                {isExp && waitingOrders.length > 0 && (
+                  <tr style={{ background: 'var(--bg3)' }}>
+                    <td colSpan={11} style={{ padding: 0 }}>
+                      <div style={{ padding: '10px 12px 14px 40px' }}>
+                        <div style={{ fontFamily: 'var(--cond)', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>
+                          Open Orders Waiting On {r.code}
+                        </div>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr>
+                              {['Order No', 'Customer', 'Order Qty', 'Dispatched', 'Still Needed'].map((h, hi) => (
+                                <th key={h} style={{
+                                  textAlign: hi >= 2 ? 'right' : 'left', color: 'var(--muted)', fontSize: 10,
+                                  fontFamily: 'var(--cond)', fontWeight: 600, letterSpacing: '.06em',
+                                  padding: '5px 8px', borderBottom: '1px solid var(--border)',
+                                }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {waitingOrders.map((w, wi) => (
+                              <tr key={wi}>
+                                <td style={{ padding: '6px 8px', fontFamily: 'var(--cond)', fontWeight: 700 }}>{w.order_no}</td>
+                                <td style={{ padding: '6px 8px', color: 'var(--muted)' }}>{w.customer_name}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{w.order_qty.toLocaleString()}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: w.dispatched_qty > 0 ? 'var(--green)' : 'var(--dim)' }}>
+                                  {w.dispatched_qty > 0 ? w.dispatched_qty.toLocaleString() : '—'}
+                                </td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>
+                                  {w.remaining.toLocaleString()}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
           </tbody>
@@ -216,19 +311,21 @@ export default function FinishedGoods() {
               dispatched: acc.dispatched + r.dispatched,
               fgStock: acc.fgStock + r.fgStock,
             }), { produced: 0, plated: 0, unplated: 0, dispatched: 0, fgStock: 0 })
+            const neededTotal = filtered.reduce((s, r) => s + (ordersByScrew[r.sid] || []).reduce((s2, w) => s2 + w.remaining, 0), 0)
             const td = (content, extra = {}) => (
               <td style={{ padding: '7px 8px', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 12, background: '#f5f4f2', borderTop: '2px solid var(--border2)', ...extra }}>{content}</td>
             )
             return (
               <tfoot>
                 <tr>
-                  {td(`TOTAL — ${filtered.length} screws`, { colSpan: 3, fontSize: 11, letterSpacing: '.04em' })}
+                  {td(`TOTAL — ${filtered.length} screws`, { colSpan: 4, fontSize: 11, letterSpacing: '.04em' })}
                   {td(tot.produced.toLocaleString(), { textAlign: 'right', color: 'var(--muted)' })}
                   {td(tot.plated.toLocaleString(), { textAlign: 'right', color: '#16A34A' })}
                   {td(tot.unplated > 0 ? tot.unplated.toLocaleString() : '—', { textAlign: 'right', color: tot.unplated > 0 ? '#DC2626' : 'var(--dim)' })}
                   {td(tot.dispatched > 0 ? tot.dispatched.toLocaleString() : '—', { textAlign: 'right', color: 'var(--muted)' })}
                   {td(tot.fgStock.toLocaleString(), { textAlign: 'right', color: '#16A34A', fontSize: 14 })}
                   {td('')}
+                  {td(neededTotal > 0 ? neededTotal.toLocaleString() : '—', { textAlign: 'right', color: 'var(--accent)' })}
                 </tr>
               </tfoot>
             )
