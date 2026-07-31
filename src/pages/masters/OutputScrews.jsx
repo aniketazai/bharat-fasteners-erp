@@ -2,9 +2,22 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 
-const EMPTY_FORM = { screw_code: '', screw_name: '', wire_id: '', conversion_ratio_per_kg: '' }
+const EMPTY_FORM = { screw_name: '', wire_id: '', conversion_ratio_per_kg: '' }
 
 function wireLabel(w) { return w ? `${w.diameter_mm}mm – ${w.grade}` : '—' }
+
+// Screw code is still stored on every record (other pages like Orders,
+// Plating, Production, Dispatch and Finished Goods all key off it), but the
+// user never sees or types it — it's generated automatically here.
+async function nextScrewCode() {
+  const { data } = await supabase.from('output_screw_master').select('screw_code')
+  let max = 0
+  for (const row of data || []) {
+    const m = row.screw_code?.match(/^SCW-(\d+)$/)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `SCW-${String(max + 1).padStart(4, '0')}`
+}
 
 export default function OutputScrews() {
   const { user } = useAuth()
@@ -46,17 +59,9 @@ export default function OutputScrews() {
     setLoading(false)
   }
 
-  function isDupCode(code, excludeId = null) {
-    return records.some(
-      r => r.id !== excludeId && r.screw_code.toLowerCase() === code.trim().toLowerCase()
-    )
-  }
-
-  function validate(data, excludeId = null) {
+  function validate(data) {
     const errs = {}
-    if (!data.screw_code.trim())                   errs.screw_code = 'Screw code is required.'
-    else if (isDupCode(data.screw_code, excludeId)) errs.screw_code = 'Screw code already exists.'
-    if (!data.screw_name.trim())                   errs.screw_name = 'Screw name is required.'
+    if (!data.screw_name.trim()) errs.screw_name = 'Screw name is required.'
     if (data.conversion_ratio_per_kg) {
       const ratio = parseFloat(data.conversion_ratio_per_kg)
       if (isNaN(ratio) || ratio <= 0) errs.conversion_ratio_per_kg = 'Ratio must be > 0.'
@@ -100,12 +105,13 @@ export default function OutputScrews() {
     if (Object.keys(errs).length) { setFormErrors(errs); return }
 
     setSaving(true)
+    const code = await nextScrewCode()
     const { data, error } = await supabase.from('output_screw_master').insert({
-      screw_code: form.screw_code.trim().toUpperCase(),
+      screw_code: code,
       screw_name: form.screw_name.trim(),
       created_by: user?.id,
     }).select()
-    if (error || !data?.length) { setSaving(false); setFormErrors({ screw_code: error?.message || 'Failed to create screw.' }); return }
+    if (error || !data?.length) { setSaving(false); setFormErrors({ screw_name: error?.message || 'Failed to create screw.' }); return }
 
     if (form.wire_id) {
       const convErr = await saveWireAndConversion(data[0].id, form.wire_id, form.conversion_ratio_per_kg)
@@ -122,7 +128,6 @@ export default function OutputScrews() {
     setEditId(row.id)
     const conv = convByScrew[row.id]
     setEditData({
-      screw_code: row.screw_code,
       screw_name: row.screw_name,
       wire_id: row.rm_wire_id || '',
       conversion_ratio_per_kg: conv ? String(conv.conversion_ratio_per_kg) : '',
@@ -131,14 +136,13 @@ export default function OutputScrews() {
   }
 
   async function handleEditSave(id) {
-    const errs = validate(editData, id)
+    const errs = validate(editData)
     if (Object.keys(errs).length) { setEditErrors(errs); return }
 
     const { error } = await supabase.from('output_screw_master').update({
-      screw_code: editData.screw_code.trim().toUpperCase(),
       screw_name: editData.screw_name.trim(),
     }).eq('id', id)
-    if (error) { setEditErrors({ screw_code: error.message }); return }
+    if (error) { setEditErrors({ screw_name: error.message }); return }
 
     const convErr = await saveWireAndConversion(id, editData.wire_id, editData.conversion_ratio_per_kg)
     if (convErr) { setEditErrors({ wire_id: convErr.message }); return }
@@ -156,10 +160,7 @@ export default function OutputScrews() {
   const active   = records.filter(r => r.status === 'Active').length
   const inactive = records.filter(r => r.status === 'Inactive').length
   const filtered = search.trim()
-    ? records.filter(r =>
-        r.screw_code.toLowerCase().includes(search.toLowerCase()) ||
-        r.screw_name.toLowerCase().includes(search.toLowerCase())
-      )
+    ? records.filter(r => r.screw_name.toLowerCase().includes(search.toLowerCase()))
     : records
 
   const wireMap = Object.fromEntries(wires.map(w => [w.id, w]))
@@ -193,7 +194,7 @@ export default function OutputScrews() {
             background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 5,
             padding: '7px 12px', fontSize: 13, color: 'var(--text)', outline: 'none', width: 220,
           }}
-          placeholder="Search code or name…"
+          placeholder="Search screw name…"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -210,16 +211,6 @@ export default function OutputScrews() {
           <div className="form-title">NEW OUTPUT SCREW</div>
           <form onSubmit={handleAdd}>
             <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)' }}>
-              <div className="form-group">
-                <label>Screw Code *</label>
-                <input
-                  className={formErrors.screw_code ? 'error' : ''}
-                  value={form.screw_code}
-                  onChange={e => setForm(f => ({ ...f, screw_code: e.target.value }))}
-                  placeholder="e.g. SC001"
-                />
-                {formErrors.screw_code && <span className="field-error">{formErrors.screw_code}</span>}
-              </div>
               <div className="form-group">
                 <label>Screw Name *</label>
                 <input
@@ -279,7 +270,6 @@ export default function OutputScrews() {
           <thead>
             <tr>
               <th style={{ width: 40 }}>#</th>
-              <th>Code</th>
               <th>Screw Name</th>
               <th>Wire Type</th>
               <th>Conversion (nos/kg)</th>
@@ -288,9 +278,9 @@ export default function OutputScrews() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={7} className="empty">Loading…</td></tr>}
+            {loading && <tr><td colSpan={6} className="empty">Loading…</td></tr>}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={7} className="empty">
+              <tr><td colSpan={6} className="empty">
                 {search ? 'No screws match your search.' : 'No screws found.'}
               </td></tr>
             )}
@@ -299,15 +289,6 @@ export default function OutputScrews() {
                 <td style={{ color: 'var(--dim)', fontSize: 11 }}>{i + 1}</td>
                 {editId === row.id ? (
                   <>
-                    <td>
-                      <input
-                        className={`mri${editErrors.screw_code ? ' error' : ''}`}
-                        value={editData.screw_code}
-                        onChange={e => setEditData(d => ({ ...d, screw_code: e.target.value }))}
-                        style={{ width: 90 }}
-                      />
-                      {editErrors.screw_code && <div className="field-error">{editErrors.screw_code}</div>}
-                    </td>
                     <td>
                       <input
                         className={`mri${editErrors.screw_name ? ' error' : ''}`}
@@ -354,7 +335,6 @@ export default function OutputScrews() {
                   </>
                 ) : (
                   <>
-                    <td className="num-cell">{row.screw_code}</td>
                     <td>{row.screw_name}</td>
                     <td style={{ fontSize: 12 }}>{wireLabel(wireMap[row.rm_wire_id])}</td>
                     <td className="num-cell">
