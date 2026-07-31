@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { useRole } from '../contexts/RoleContext'
 import {
@@ -91,13 +92,14 @@ function niceDate() {
 }
 
 function downloadCSV(filename, headers, rows) {
-  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-  const lines = [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  ws['!cols'] = headers.map((h, i) => {
+    const maxLen = Math.max(String(h).length, ...rows.map(r => String(r[i] ?? '').length))
+    return { wch: Math.min(Math.max(maxLen + 2, 10), 40) }
+  })
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Data')
+  XLSX.writeFile(wb, filename.replace(/\.csv$/i, '.xlsx'))
 }
 
 // ── UI atoms ──────────────────────────────────────────────────────────────────
@@ -348,7 +350,7 @@ function SlicerBar({ sl, setSl, onApply, onReset, customers, screws, machines })
         <span style={LBL}>Product</span>
         <select value={sl.screwId} onChange={e => s('screwId', e.target.value)} style={SEL}>
           <option value="">All</option>
-          {screws.map(c => <option key={c.id} value={c.id}>{c.screw_code}</option>)}
+          {screws.map(c => <option key={c.id} value={c.id}>{c.screw_name}</option>)}
         </select>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -506,13 +508,11 @@ export default function Dashboard() {
       if (sid) dispBySid[sid] = (dispBySid[sid] || 0) + (d2.quantity_nos || 0)
     }
 
-    // Screw info lookup for FG stock list (from order_items)
-    const screwInfo = {}
-    for (const it of items) {
-      if (it.screw_id && it.screw) {
-        screwInfo[it.screw_id] = { code: it.screw.screw_code || '—', name: it.screw.screw_name || '—' }
-      }
-    }
+    // Screw info lookup for FG stock list — built from the FULL screw list
+    // (not just ones that appear in orders), so screws that were produced
+    // but never ordered still show their real name instead of falling back
+    // to a blank/garbled value.
+    const screwInfo = { ...screwLookup }
     // Opening stock: add to produced + plated BEFORE fgTotal; also backfill screwInfo for OS-only screws
     for (const o of fgOpen) {
       if (!o.screw_id) continue
@@ -535,8 +535,7 @@ export default function Dashboard() {
         let status = 'UNPLATED'
         if (plated > 0) status = (plated + dispatched >= produced) ? 'PLATED' : 'PARTIAL'
         return {
-          code: screwInfo[sid]?.code || screwLookup[sid]?.code || sid.slice(-6),
-          name: screwInfo[sid]?.name || screwLookup[sid]?.name || '—',
+          name: screwInfo[sid]?.name || screwLookup[sid]?.name || 'Unknown Screw',
           produced, plated, unplated, dispatched, inStock, status,
         }
       })
@@ -595,8 +594,8 @@ export default function Dashboard() {
     const screwQtyMap = {}
     for (const it of items) {
       if (ordInPeriodIds.has(it.order_id)) {
-        const code = it.screw?.screw_code || 'Unknown'
-        screwQtyMap[code] = (screwQtyMap[code] || 0) + (it.order_qty || 0)
+        const name = screwLookup[it.screw_id]?.name || it.screw?.screw_name || 'Unknown'
+        screwQtyMap[name] = (screwQtyMap[name] || 0) + (it.order_qty || 0)
       }
     }
     const productPie = Object.entries(screwQtyMap)
@@ -629,12 +628,11 @@ export default function Dashboard() {
     const prodEff     = prodExp > 0 ? Math.min(+(prodOut / prodExp * 100).toFixed(1), 100) : 0
 
     // Screw-wise output in period (from aProd with entry_date)
-    const screwIdToCode = Object.fromEntries(items.map(it => [it.screw_id, it.screw?.screw_code]).filter(([id, code]) => id && code))
     const screwProdMap = {}
     for (const e of aProd) {
       if (!e.entry_date || e.entry_date < from || e.entry_date > to) continue
-      const code = screwIdToCode[e.screw_id] || e.screw_id?.slice(-6) || 'Other'
-      screwProdMap[code] = (screwProdMap[code] || 0) + (e.output_nos || 0)
+      const name = screwLookup[e.screw_id]?.name || 'Unknown Screw'
+      screwProdMap[name] = (screwProdMap[name] || 0) + (e.output_nos || 0)
     }
     const screwPie = Object.entries(screwProdMap)
       .map(([name, out]) => ({ name, out }))
@@ -748,8 +746,8 @@ export default function Dashboard() {
     const platInPeriod = plat.filter(p => p.send_date >= from && p.send_date <= to)
     const platScrewMap = {}
     for (const p of platInPeriod) {
-      const code = items.find(it => it.screw_id === p.screw_id)?.screw?.screw_code || `S-${(p.screw_id||'').slice(-4)}`
-      platScrewMap[code] = (platScrewMap[code] || 0) + (p.sent_qty || 0)
+      const name = screwLookup[p.screw_id]?.name || 'Unknown Screw'
+      platScrewMap[name] = (platScrewMap[name] || 0) + (p.sent_qty || 0)
     }
     const platDonut = Object.entries(platScrewMap)
       .map(([name, qty]) => ({ name, qty }))
@@ -823,7 +821,7 @@ export default function Dashboard() {
                         ['Overall', 'FG Stock (pcs)', d.kpi.fgPcs],
                         ['Overall', 'Dispatches', d.kpi.dCurr],
                         ...d.stockHealth.map(w => ['RM', w.wire, `${w.stock} kg (${w.status})`]),
-                        ...d.fgStockList.map(r => ['FG Stock', `${r.code} – ${r.name}`, `${r.inStock} pcs`]),
+                        ...d.fgStockList.map(r => ['FG Stock', r.name, `${r.inStock} pcs`]),
                         ...d.machBar.map(m => ['Production', m.name, `${m.output} pcs | ${m.kg} kg | Loss ${m.loss}%`]),
                         ...d.pendingDisp.map(o => ['Dispatch', o.order_no, `${o.remaining} pcs remaining`]),
                       ]
@@ -1099,7 +1097,7 @@ export default function Dashboard() {
             ['Type', 'Wire / Screw', 'Current Stock', 'Min Stock / At Vendor', 'Dispatched', 'Status / In Stock'],
             [
               ...d.stockHealth.map(w => ['Wire', w.wire, w.stock, w.min, '—', w.status]),
-              ...d.fgStockList.map(r => ['FG', `${r.code} – ${r.name}`, r.produced, r.atVendor, r.dispatched, r.inStock]),
+              ...d.fgStockList.map(r => ['FG', r.name, r.produced, r.atVendor, r.dispatched, r.inStock]),
             ]
           ) : undefined}
         />
@@ -1144,7 +1142,7 @@ export default function Dashboard() {
                 <Box title={`FG Stock — Plating Status by Screw (${list.length} items)`} style={{ marginBottom: 12 }}>
                   <MiniTable
                     headers={[
-                      { label: 'Screw Code' }, { label: 'Screw Name' },
+                      { label: 'Screw Name' },
                       { label: 'Produced', right: true }, { label: 'Plated', right: true },
                       { label: 'Unplated', right: true }, { label: 'Dispatched', right: true },
                       { label: 'FG Stock', right: true }, { label: 'Status' },
@@ -1152,14 +1150,13 @@ export default function Dashboard() {
                     rows={shown.map(r => {
                       const stColor = r.status === 'PLATED' ? C.green : r.status === 'PARTIAL' ? C.yellow : C.red
                       return [
-                        { label: r.code, cond: true, bold: true },
-                        { label: r.name },
+                        { label: r.name, cond: true, bold: true },
                         { label: IN(r.produced), right: true, color: 'var(--muted)' },
                         { label: r.plated > 0 ? IN(r.plated) : '—', right: true, color: r.plated > 0 ? C.green : 'var(--dim)' },
                         { label: r.unplated > 0 ? IN(r.unplated) : '—', right: true, color: r.unplated > 0 ? C.red : 'var(--dim)' },
                         { label: r.dispatched > 0 ? IN(r.dispatched) : '—', right: true, color: 'var(--muted)' },
                         { label: r.inStock > 0 ? IN(r.inStock) : '—', right: true, bold: true, color: r.inStock > 0 ? C.green : 'var(--dim)' },
-                        <span key={r.code} style={{ fontSize: 9, fontFamily: 'var(--cond)', fontWeight: 700, letterSpacing: '.06em', padding: '2px 7px', borderRadius: 10, background: stColor + '18', color: stColor, border: `1px solid ${stColor}44` }}>{r.status}</span>,
+                        <span key={r.name} style={{ fontSize: 9, fontFamily: 'var(--cond)', fontWeight: 700, letterSpacing: '.06em', padding: '2px 7px', borderRadius: 10, background: stColor + '18', color: stColor, border: `1px solid ${stColor}44` }}>{r.status}</span>,
                       ]
                     })}
                     footer={list.length > 0 ? [
