@@ -1,15 +1,17 @@
 import { useEffect, useState, Fragment } from 'react'
 import { ChevronDown } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 
-function downloadCSV(filename, headers, rows) {
-  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-  const lines = [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
+function downloadExcel(filename, headers, rows) {
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  ws['!cols'] = headers.map((h, i) => {
+    const maxLen = Math.max(String(h).length, ...rows.map(r => String(r[i] ?? '').length))
+    return { wch: Math.min(Math.max(maxLen + 2, 10), 40) }
+  })
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Data')
+  XLSX.writeFile(wb, filename.replace(/\.csv$/i, '.xlsx'))
 }
 
 const ST = {
@@ -33,7 +35,7 @@ export default function FinishedGoods() {
       supabase.from('production_entries')
         .select('screw_id, output_nos, screw:screw_id(screw_code, screw_name)'),
       supabase.from('plating_entries')
-        .select('screw_id, received_qty'),
+        .select('screw_id, received_qty_nos'),
       supabase.from('order_items')
         .select('id, screw_id'),
       supabase.from('dispatch_entries')
@@ -63,8 +65,8 @@ export default function FinishedGoods() {
     // Plated (received from plating) per screw
     const platedMap = {}
     for (const p of (platRes.data || [])) {
-      if (!p.screw_id || !p.received_qty) continue
-      platedMap[p.screw_id] = (platedMap[p.screw_id] || 0) + (p.received_qty || 0)
+      if (!p.screw_id || !p.received_qty_nos) continue
+      platedMap[p.screw_id] = (platedMap[p.screw_id] || 0) + (p.received_qty_nos || 0)
     }
 
     // Opening stock: adds to produced + plated (PLATED) or produced only (UNPLATED)
@@ -180,10 +182,10 @@ export default function FinishedGoods() {
             }}>{f.label}</button>
           ))}
         </div>
-        <button className="btn-add" onClick={() => downloadCSV('fg-stock.csv',
+        <button className="btn-add" onClick={() => downloadExcel('fg-stock.xlsx',
           ['#', 'Screw Code', 'Screw Name', 'Produced (nos)', 'Plated (nos)', 'Unplated (nos)', 'Dispatched (nos)', 'FG Stock (nos)', 'Status'],
           filtered.map((r, i) => [i+1, r.code, r.name, r.produced, r.plated, r.unplated, r.dispatched, r.fgStock, r.status])
-        )}>↓ EXPORT CSV</button>
+        )}>↓ EXPORT EXCEL</button>
       </div>
 
       <div className="tbl-wrap">
