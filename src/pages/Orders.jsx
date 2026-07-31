@@ -10,10 +10,16 @@ const today = () => new Date().toISOString().slice(0, 10)
 const fmtDate = d => { if (!d) return '—'; const [y, m, dy] = d.split('-'); return `${dy}/${m}/${y.slice(2)}` }
 
 async function nextOrderNo() {
-  const { data } = await supabase.from('orders').select('order_no').order('created_at', { ascending: false }).limit(1)
-  if (!data?.length) return 'ORD-0001'
-  const m = data[0].order_no?.match(/ORD-(\d+)/)
-  return m ? `ORD-${String(parseInt(m[1]) + 1).padStart(4, '0')}` : 'ORD-0001'
+  // Scan ALL order numbers and take the highest ORD-#### suffix, not just the
+  // most recently created row — a single out-of-pattern or out-of-order record
+  // used to cause duplicate order numbers (and a failed insert) here.
+  const { data } = await supabase.from('orders').select('order_no')
+  let max = 0
+  for (const row of data || []) {
+    const m = row.order_no?.match(/^ORD-(\d+)$/)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `ORD-${String(max + 1).padStart(4, '0')}`
 }
 
 const EMPTY_HDR = { order_no: '', order_date: today(), customer_id: '', due_date: '', invoice_no: '', notes: '' }
@@ -30,6 +36,7 @@ export default function Orders() {
   const [wires, setWires]         = useState([])
   const [convMap, setConvMap]     = useState({})   // screw_id → [wire_id, ...]
   const [ratioMap, setRatioMap]   = useState({})   // screw_id → conversion_ratio_per_kg
+  const [fgMap, setFgMap]         = useState({})   // screw_id → { fgReady, pendingPlating }
   const [loading, setLoading]     = useState(true)
 
   const [showForm, setShowForm]   = useState(false)
@@ -46,7 +53,7 @@ export default function Orders() {
 
   async function load() {
     setLoading(true)
-    const [oRes, iRes, cRes, sRes, wRes, cvRes] = await Promise.all([
+    const [oRes, iRes, cRes, sRes, wRes, cvRes, prodRes, platRes, openRes] = await Promise.all([
       supabase.from('orders')
         .select('*, customer:customer_id(customer_name)')
         .order('created_at', { ascending: false }),
@@ -57,6 +64,9 @@ export default function Orders() {
       supabase.from('output_screw_master').select('id,screw_code,screw_name,rm_wire_id').eq('status','Active').order('screw_code'),
       supabase.from('rm_wire_master').select('id,diameter_mm,grade').order('diameter_mm'),
       supabase.from('conversion_master').select('screw_id,wire_id,conversion_ratio_per_kg'),
+      supabase.from('production_entries').select('screw_id, output_nos'),
+      supabase.from('plating_entries').select('screw_id, received_qty'),
+      supabase.from('fg_opening_stock').select('screw_id, quantity_nos, stock_type'),
     ])
 
     setOrders(oRes.data || [])
@@ -83,6 +93,46 @@ export default function Orders() {
       if (!rm[cv.screw_id] && cv.conversion_ratio_per_kg) rm[cv.screw_id] = cv.conversion_ratio_per_kg
     }
     setRatioMap(rm)
+
+    // ── FG / Plating sync (same logic as the Finished Goods page) ──────────
+    // Plating and production are tracked per SCREW TYPE, not per order — a
+    // single plating batch can cover several orders at once. So "FG Ready"
+    // and "Pending Plating" below are pooled per screw code, not a strict
+    // per-order reservation.
+    const produced = {}
+    for (const p of (prodRes.data || [])) {
+      if (!p.screw_id) continue
+      produced[p.screw_id] = (produced[p.screw_id] || 0) + (p.output_nos || 0)
+    }
+    const plated = {}
+    for (const p of (platRes.data || [])) {
+      if (!p.screw_id) continue
+      plated[p.screw_id] = (plated[p.screw_id] || 0) + (p.received_qty || 0)
+    }
+    for (const o of (openRes.data || [])) {
+      if (!o.screw_id) continue
+      produced[o.screw_id] = (produced[o.screw_id] || 0) + (o.quantity_nos || 0)
+      if (o.stock_type === 'PLATED') plated[o.screw_id] = (plated[o.screw_id] || 0) + (o.quantity_nos || 0)
+    }
+    // Global dispatched per screw = sum of dispatched_qty across ALL order items for that screw
+    const dispatchedByScrew = {}
+    for (const it of (iRes.data || [])) {
+      if (!it.screw_id) continue
+      dispatchedByScrew[it.screw_id] = (dispatchedByScrew[it.screw_id] || 0) + (it.dispatched_qty || 0)
+    }
+    const fg = {}
+    const screwIds = new Set([...Object.keys(produced), ...Object.keys(plated)])
+    for (const sid of screwIds) {
+      const prod = produced[sid] || 0
+      const plt  = plated[sid] || 0
+      const disp = dispatchedByScrew[sid] || 0
+      fg[sid] = {
+        fgReady:        Math.max(plt - disp, 0),
+        pendingPlating: Math.max(prod - plt, 0),
+      }
+    }
+    setFgMap(fg)
+
     setLoading(false)
   }
 
@@ -177,15 +227,19 @@ export default function Orders() {
     setSaving(true)
 
     if (editId) {
+      // invoice_no is now saved in the SAME call as the other header fields
+      // (previously a second, separate call whose errors were silently
+      // ignored — that's why clearing/editing the invoice number could look
+      // like it "didn't work": it failed quietly and the old value came back
+      // on reload).
       const { error: hErr } = await supabase.from('orders').update({
         order_date:  hdr.order_date || today(),
         customer_id: hdr.customer_id,
         due_date:    hdr.due_date || null,
         notes:       hdr.notes.trim() || null,
+        invoice_no:  hdr.invoice_no?.trim() || null,
       }).eq('id', editId)
-      if (hErr) { setErrors({ _: hErr.message }); setSaving(false); return }
-      // invoice_no saved separately (column may not exist yet — run ALTER TABLE orders ADD COLUMN invoice_no TEXT)
-      await supabase.from('orders').update({ invoice_no: hdr.invoice_no?.trim() || null }).eq('id', editId)
+      if (hErr) { setErrors({ _: `Could not save: ${hErr.message}` }); setSaving(false); return }
 
       const curIds = new Set(items.filter(i => i.id).map(i => i.id))
       const toDelete = origItems.filter(oi => !curIds.has(oi.id) && oi.dispatched_qty === 0).map(oi => oi.id)
@@ -213,24 +267,37 @@ export default function Orders() {
       }
 
     } else {
-      const { data, error: oErr } = await supabase.from('orders').insert({
-        order_no:    hdr.order_no.trim().toUpperCase(),
-        order_date:  hdr.order_date || today(),
-        customer_id: hdr.customer_id,
-        due_date:    hdr.due_date || null,
-        notes:       hdr.notes.trim() || null,
-        created_by:  user?.id,
-      }).select()
-      if (oErr || !data?.length) { setErrors({ _: oErr?.message || 'Failed to create order.' }); setSaving(false); return }
+      let orderNo = hdr.order_no.trim().toUpperCase()
+      let data, oErr
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await supabase.from('orders').insert({
+          order_no:    orderNo,
+          order_date:  hdr.order_date || today(),
+          customer_id: hdr.customer_id,
+          due_date:    hdr.due_date || null,
+          notes:       hdr.notes.trim() || null,
+          invoice_no:  hdr.invoice_no?.trim() || null,
+          created_by:  user?.id,
+        }).select()
+        data = res.data; oErr = res.error
+        // 23505 = Postgres unique-violation. If it's specifically the order_no
+        // that collided (e.g. two people saved at the same moment), regenerate
+        // the next number and try again instead of just failing.
+        if (oErr?.code === '23505' && oErr.message?.includes('order_no')) {
+          orderNo = await nextOrderNo()
+          continue
+        }
+        break
+      }
+      if (oErr || !data?.length) { setErrors({ _: `Could not create order: ${oErr?.message || 'unknown error'}` }); setSaving(false); return }
 
-      await supabase.from('order_items').insert(items.map(i => ({
+      const { error: iErr } = await supabase.from('order_items').insert(items.map(i => ({
         order_id:  data[0].id,
         screw_id:  i.screw_id,
         wire_id:   i.wire_id || null,
         order_qty: parseInt(i.order_qty),
       })))
-      // invoice_no saved separately (column may not exist yet)
-      if (hdr.invoice_no?.trim()) await supabase.from('orders').update({ invoice_no: hdr.invoice_no.trim() }).eq('id', data[0].id)
+      if (iErr) { setErrors({ _: `Order created but items failed to save: ${iErr.message}` }); setSaving(false); return }
     }
 
     setSaving(false)
@@ -260,6 +327,8 @@ export default function Orders() {
       count:    its.length,
       totalQty: its.reduce((s, i) => s + (i.order_qty || 0), 0),
       totalDisp: its.reduce((s, i) => s + (i.dispatched_qty || 0), 0),
+      fgReady:        its.reduce((s, i) => s + (fgMap[i.screw_id]?.fgReady || 0), 0),
+      pendingPlating: its.reduce((s, i) => s + (fgMap[i.screw_id]?.pendingPlating || 0), 0),
     }
   }
 
@@ -487,14 +556,16 @@ export default function Orders() {
               <th style={{ textAlign: 'center' }}>Items</th>
               <th style={{ textAlign: 'right' }}>Total Qty</th>
               <th style={{ textAlign: 'right' }}>Dispatched</th>
+              <th style={{ textAlign: 'right' }}>FG Ready</th>
+              <th style={{ textAlign: 'right' }}>Pending Plating</th>
               <th>Status</th>
               <th>Due</th>
               <th data-no-export>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={12} className="empty">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={12} className="empty">No orders found.</td></tr>}
+            {loading && <tr><td colSpan={14} className="empty">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={14} className="empty">No orders found.</td></tr>}
             {filtered.map((o, i) => {
               const tots    = orderTotals(o.id)
               const rem     = Math.max(tots.totalQty - tots.totalDisp, 0)
@@ -524,6 +595,12 @@ export default function Orders() {
                     <td className="num-cell" style={{ textAlign: 'right', color: tots.totalDisp > 0 ? 'var(--green)' : 'var(--dim)' }}>
                       {tots.totalDisp.toLocaleString()}
                     </td>
+                    <td className="num-cell" style={{ textAlign: 'right', color: tots.fgReady > 0 ? 'var(--green)' : 'var(--dim)', fontWeight: tots.fgReady > 0 ? 700 : 400 }}>
+                      {tots.fgReady > 0 ? tots.fgReady.toLocaleString() : '—'}
+                    </td>
+                    <td className="num-cell" style={{ textAlign: 'right', color: tots.pendingPlating > 0 ? 'var(--red)' : 'var(--dim)' }}>
+                      {tots.pendingPlating > 0 ? tots.pendingPlating.toLocaleString() : '—'}
+                    </td>
                     <td><span className={`badge ${BADGE[o.status] || 'b-warn'}`}>{o.status}</span></td>
                     <td style={{ fontSize: 12, color: overdue ? 'var(--red)' : 'var(--muted)', fontWeight: overdue ? 700 : 400 }}>
                       {fmtDate(o.due_date)}
@@ -549,7 +626,7 @@ export default function Orders() {
 
                   {isExp && (
                     <tr style={{ background: 'var(--bg3)' }}>
-                      <td colSpan={12} style={{ padding: 0 }}>
+                      <td colSpan={14} style={{ padding: 0 }}>
                         <div style={{ padding: '10px 12px 14px 52px' }}>
                           <div style={{ fontFamily: 'var(--cond)', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>
                             Order Items
@@ -559,8 +636,8 @@ export default function Orders() {
                             : <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                                 <thead>
                                   <tr>
-                                    {['Screw','Wire','Order Qty','Dispatched','Remaining','Fulfillment','Status'].map((h, hi) => (
-                                      <th key={h} style={{ ...thStyle, textAlign: hi >= 2 && hi <= 4 ? 'right' : 'left' }}>{h}</th>
+                                    {['Screw','Wire','Order Qty','Dispatched','Remaining','FG Ready','Pending Plating','Fulfillment','Status'].map((h, hi) => (
+                                      <th key={h} style={{ ...thStyle, textAlign: hi >= 2 && hi <= 6 ? 'right' : 'left' }}>{h}</th>
                                     ))}
                                   </tr>
                                 </thead>
@@ -585,6 +662,12 @@ export default function Orders() {
                                         </td>
                                         <td style={{ padding: '6px 8px', textAlign: 'right', color: remQ > 0 ? 'var(--accent)' : 'var(--green)', fontWeight: 700 }}>
                                           {remQ.toLocaleString()}
+                                        </td>
+                                        <td style={{ padding: '6px 8px', textAlign: 'right', color: (fgMap[item.screw_id]?.fgReady || 0) > 0 ? 'var(--green)' : 'var(--dim)', fontWeight: 700 }}>
+                                          {(fgMap[item.screw_id]?.fgReady || 0) > 0 ? fgMap[item.screw_id].fgReady.toLocaleString() : '—'}
+                                        </td>
+                                        <td style={{ padding: '6px 8px', textAlign: 'right', color: (fgMap[item.screw_id]?.pendingPlating || 0) > 0 ? 'var(--red)' : 'var(--dim)' }}>
+                                          {(fgMap[item.screw_id]?.pendingPlating || 0) > 0 ? fgMap[item.screw_id].pendingPlating.toLocaleString() : '—'}
                                         </td>
                                         <td style={{ padding: '6px 8px' }}>
                                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
