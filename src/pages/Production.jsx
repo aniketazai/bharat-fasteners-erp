@@ -33,7 +33,7 @@ const BRIEF_DIM     = '#334155'
 const BRIEF_ACCENT  = '#38BDF8'   // sky blue
 
 function ScrewSearch({ items, value, onChange, hasError }) {
-  const label = (id) => { const s = items.find(s => s.id === id); return s ? `${s.screw_code} – ${s.screw_name}` : '' }
+  const label = (id) => { const s = items.find(s => s.id === id); return s ? s.screw_name : '' }
   const [text, setText] = useState(() => label(value))
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -53,7 +53,7 @@ function ScrewSearch({ items, value, onChange, hasError }) {
 
   const isTyping = text.length > 0 && text !== label(value)
   const filtered = isTyping
-    ? items.filter(s => `${s.screw_code} ${s.screw_name}`.toLowerCase().includes(text.toLowerCase()))
+    ? items.filter(s => s.screw_name.toLowerCase().includes(text.toLowerCase()))
     : items
 
   return (
@@ -75,13 +75,12 @@ function ScrewSearch({ items, value, onChange, hasError }) {
         }}>
           {filtered.map(s => (
             <div key={s.id}
-              onMouseDown={() => { onChange(s.id); setText(`${s.screw_code} – ${s.screw_name}`); setOpen(false) }}
+              onMouseDown={() => { onChange(s.id); setText(s.screw_name); setOpen(false) }}
               style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--border)' }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
               onMouseLeave={e => e.currentTarget.style.background = '#fff'}
             >
-              <span style={{ fontFamily: 'var(--cond)', fontWeight: 700 }}>{s.screw_code}</span>
-              <span style={{ color: 'var(--muted)', marginLeft: 6, fontSize: 11 }}>{s.screw_name}</span>
+              <span style={{ fontFamily: 'var(--cond)', fontWeight: 600 }}>{s.screw_name}</span>
               {s.suffix && <span style={{ marginLeft: 10, color: 'var(--accent)', fontSize: 10, fontWeight: 600 }}>{s.suffix}</span>}
             </div>
           ))}
@@ -309,7 +308,7 @@ function OrdersBrief({ openOrders, openItemsMap, customers, wires, convMap, wire
                               <td style={{ padding: '9px 14px', color: BRIEF_DIM, fontSize: 11 }}>{ii + 1}</td>
                               <td style={{ padding: '9px 14px', whiteSpace: 'nowrap' }}>
                                 <span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13, color: '#F1F5F9' }}>
-                                  {item.screw?.screw_code}
+                                  {item.screw?.screw_name}
                                 </span>
                                 <span style={{ color: BRIEF_MUTED, fontSize: 11, marginLeft: 7 }}>
                                   {item.screw?.screw_name}
@@ -1023,7 +1022,7 @@ export default function Production() {
                           <td>
                             <select className="mri-sel" value={r.screw_id} onChange={e => setMultiField(i, 'screw_id', e.target.value)} style={{ minWidth: 130 }}>
                               <option value="">—</option>
-                              {screws.map(s => <option key={s.id} value={s.id}>{s.screw_code}</option>)}
+                              {screws.map(s => <option key={s.id} value={s.id}>{s.screw_name}</option>)}
                             </select>
                           </td>
                           <td>
@@ -1100,7 +1099,7 @@ export default function Production() {
                   <td style={{ fontSize: 12 }}>{e.order?.order_no || '—'}</td>
                   <td style={{ fontSize: 12 }}>{e.machine?.machine_code || e.machine?.machine_name || '—'}</td>
                   <td style={{ fontSize: 12 }}>{e.wire ? `${e.wire.diameter_mm}mm – ${e.wire.grade}` : '—'}</td>
-                  <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.screw?.screw_code}</span></td>
+                  <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.screw?.screw_name}</span></td>
                   <td className="num-cell" style={{ textAlign: 'right' }}>{parseFloat(e.wire_used_kg).toFixed(2)}</td>
                   <td className="num-cell" style={{ textAlign: 'right', color: 'var(--muted)' }}>{e.expected_nos?.toLocaleString() || '—'}</td>
                   <td className="num-cell" style={{ textAlign: 'right', color: 'var(--green)' }}>{e.output_nos.toLocaleString()}</td>

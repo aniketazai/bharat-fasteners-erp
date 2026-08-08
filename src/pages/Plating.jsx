@@ -21,7 +21,7 @@ const EMPTY = {
 function ScrewCombobox({ screws, value, onChange, hasError }) {
   const label = (id) => {
     const s = screws.find(s => s.id === id)
-    return s ? `${s.screw_code} – ${s.screw_name}` : ''
+    return s ? s.screw_name : ''
   }
   const [text, setText]   = useState(() => label(value))
   const [open, setOpen]   = useState(false)
@@ -41,7 +41,7 @@ function ScrewCombobox({ screws, value, onChange, hasError }) {
   }, [value, screws])
 
   const visible = text && text !== label(value)
-    ? screws.filter(s => `${s.screw_code} ${s.screw_name}`.toLowerCase().includes(text.toLowerCase()))
+    ? screws.filter(s => s.screw_name.toLowerCase().includes(text.toLowerCase()))
     : screws
 
   return (
@@ -63,13 +63,12 @@ function ScrewCombobox({ screws, value, onChange, hasError }) {
         }}>
           {visible.map(s => (
             <div key={s.id}
-              onMouseDown={() => { onChange(s.id); setText(`${s.screw_code} – ${s.screw_name}`); setOpen(false) }}
+              onMouseDown={() => { onChange(s.id); setText(s.screw_name); setOpen(false) }}
               style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--border)' }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
               onMouseLeave={e => e.currentTarget.style.background = '#fff'}
             >
-              <span style={{ fontFamily: 'var(--cond)', fontWeight: 700 }}>{s.screw_code}</span>
-              <span style={{ color: 'var(--muted)', marginLeft: 6, fontSize: 11 }}>{s.screw_name}</span>
+              <span style={{ fontFamily: 'var(--cond)', fontWeight: 600 }}>{s.screw_name}</span>
             </div>
           ))}
         </div>
@@ -482,7 +481,7 @@ export default function Plating() {
                   <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 700 }}>{e.lot_no}</span></td>
                   <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.send_date}</td>
                   <td>
-                    <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.screw?.screw_code}</span>
+                    <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.screw?.screw_name}</span>
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}> {e.screw?.screw_name}</span>
                   </td>
                   <td style={{ fontSize: 12 }}>{e.plating_type?.plating_name || '—'}</td>

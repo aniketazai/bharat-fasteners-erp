@@ -301,7 +301,7 @@ export default function OpeningStock() {
                 <select style={{ ...inp, borderColor: fgErr.screw_id ? 'var(--red)' : 'var(--border)' }}
                   value={fgForm.screw_id} onChange={e => setFgForm(f => ({ ...f, screw_id: e.target.value }))}>
                   <option value="">— Select screw —</option>
-                  {screws.map(s => <option key={s.id} value={s.id}>{s.screw_code} – {s.screw_name}</option>)}
+                  {screws.map(s => <option key={s.id} value={s.id}>{s.screw_name}</option>)}
                 </select>
                 {fgErr.screw_id && <span className="field-error">{fgErr.screw_id}</span>}
               </div>
@@ -361,7 +361,6 @@ export default function OpeningStock() {
                 <tr>
                   <th style={{ width: 36 }}>#</th>
                   <th>Date</th>
-                  <th>Screw Code</th>
                   <th>Screw Name</th>
                   <th style={{ textAlign: 'right' }}>Qty (nos)</th>
                   <th>Status</th>
@@ -370,15 +369,14 @@ export default function OpeningStock() {
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={8} className="empty">Loading…</td></tr>}
+                {loading && <tr><td colSpan={7} className="empty">Loading…</td></tr>}
                 {fgRows.map((r, i) => {
                   const s = TYPE_STYLE[r.stock_type]
                   return (
                     <tr key={r.id}>
                       <td style={{ color: 'var(--dim)', fontSize: 11 }}>{i + 1}</td>
                       <td style={{ fontSize: 12, color: 'var(--muted)' }}>{r.entry_date}</td>
-                      <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13 }}>{r.screw?.screw_code || '—'}</span></td>
-                      <td style={{ fontSize: 12, color: 'var(--muted)' }}>{r.screw?.screw_name || '—'}</td>
+                      <td style={{ fontSize: 12 }}>{r.screw?.screw_name || '—'}</td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 14 }}>
                         {r.quantity_nos.toLocaleString()}
                       </td>

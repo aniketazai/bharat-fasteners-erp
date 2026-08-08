@@ -351,7 +351,7 @@ export default function Dispatch() {
                   </div>
                   <div className="form-group">
                     <label>Item</label>
-                    <input readOnly value={`${editEntry?.item?.screw?.screw_code || '—'} – ${editEntry?.item?.screw?.screw_name || '—'}`}
+                    <input readOnly value={editEntry?.item?.screw?.screw_name || '—'}
                       style={{ background: 'var(--bg3)', color: 'var(--muted)', cursor: 'not-allowed' }} />
                   </div>
                 </>
@@ -379,7 +379,7 @@ export default function Dispatch() {
                         const rem = Math.max(i.order_qty - i.dispatched_qty, 0)
                         return (
                           <option key={i.id} value={i.id}>
-                            {i.screw?.screw_code} — {rem.toLocaleString()} remaining
+                            {i.screw?.screw_name} — {rem.toLocaleString()} remaining
                           </option>
                         )
                       })}
@@ -437,7 +437,7 @@ export default function Dispatch() {
             {!editId && selItem && (
               <div style={{ background: 'var(--accentbg)', border: '1px solid var(--accentbr)', borderRadius: 6, padding: '10px 14px', marginTop: 10, display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
                 <span><span style={{ color: 'var(--muted)' }}>Customer: </span><strong>{selOrder?.customer?.customer_name}</strong></span>
-                <span><span style={{ color: 'var(--muted)' }}>Screw: </span><strong>{selItem.screw?.screw_code} – {selItem.screw?.screw_name}</strong></span>
+                <span><span style={{ color: 'var(--muted)' }}>Screw: </span><strong>{selItem.screw?.screw_name}</strong></span>
                 <span><span style={{ color: 'var(--muted)' }}>Order Qty: </span><strong>{selItem.order_qty?.toLocaleString()}</strong></span>
                 <span><span style={{ color: 'var(--muted)' }}>Already Dispatched: </span><strong>{(selItem.dispatched_qty || 0).toLocaleString()}</strong></span>
                 <span><span style={{ color: 'var(--muted)' }}>Remaining: </span><strong style={{ color: 'var(--accent)' }}>{Math.max((selItem.order_qty || 0) - (selItem.dispatched_qty || 0), 0).toLocaleString()}</strong></span>
@@ -483,8 +483,7 @@ export default function Dispatch() {
                 <td style={{ fontSize: 12 }}>{e.order?.order_no || '—'}</td>
                 <td style={{ fontSize: 12 }}>{e.order?.customer?.customer_name || '—'}</td>
                 <td>
-                  <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.item?.screw?.screw_code}</span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}> {e.item?.screw?.screw_name}</span>
+                  <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.item?.screw?.screw_name}</span>
                 </td>
                 <td className="num-cell" style={{ textAlign: 'right', color: 'var(--green)' }}>{(e.quantity_nos || 0).toLocaleString()}</td>
                 <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.notes || '—'}</td>

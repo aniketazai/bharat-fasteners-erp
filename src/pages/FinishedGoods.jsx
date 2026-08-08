@@ -183,8 +183,8 @@ export default function FinishedGoods() {
           ))}
         </div>
         <button className="btn-add" onClick={() => downloadExcel('fg-stock.xlsx',
-          ['#', 'Screw Code', 'Screw Name', 'Produced (nos)', 'Plated (nos)', 'Unplated (nos)', 'Dispatched (nos)', 'FG Stock (nos)', 'Status'],
-          filtered.map((r, i) => [i+1, r.code, r.name, r.produced, r.plated, r.unplated, r.dispatched, r.fgStock, r.status])
+          ['#', 'Screw Name', 'Produced (nos)', 'Plated (nos)', 'Unplated (nos)', 'Dispatched (nos)', 'FG Stock (nos)', 'Status'],
+          filtered.map((r, i) => [i+1, r.name, r.produced, r.plated, r.unplated, r.dispatched, r.fgStock, r.status])
         )}>↓ EXPORT EXCEL</button>
       </div>
 
@@ -194,7 +194,6 @@ export default function FinishedGoods() {
             <tr>
               <th style={{ width: 24 }} data-no-export></th>
               <th style={{ width: 36 }}>#</th>
-              <th>Screw Code</th>
               <th>Screw Name</th>
               <th style={{ textAlign: 'right' }}>Produced</th>
               <th style={{ textAlign: 'right' }}>Plated</th>
@@ -206,8 +205,8 @@ export default function FinishedGoods() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={11} className="empty">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={11} className="empty">No finished goods yet.</td></tr>}
+            {loading && <tr><td colSpan={10} className="empty">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={10} className="empty">No finished goods yet.</td></tr>}
             {filtered.map((r, i) => {
               const s = ST[r.status]
               const waitingOrders = ordersByScrew[r.sid] || []
@@ -224,8 +223,7 @@ export default function FinishedGoods() {
                     )}
                   </td>
                   <td style={{ color: 'var(--dim)', fontSize: 11 }}>{i + 1}</td>
-                  <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13 }}>{r.code}</span></td>
-                  <td style={{ fontSize: 12, color: 'var(--muted)' }}>{r.name}</td>
+                  <td style={{ fontSize: 12 }}>{r.name}</td>
                   <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--muted)' }}>{r.produced.toLocaleString()}</td>
                   <td style={{ textAlign: 'right', fontSize: 12, fontWeight: r.plated > 0 ? 700 : 400, color: r.plated > 0 ? '#16A34A' : 'var(--dim)' }}>
                     {r.plated > 0 ? r.plated.toLocaleString() : '—'}
