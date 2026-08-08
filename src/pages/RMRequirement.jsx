@@ -129,8 +129,7 @@ export default function RMRequirement() {
                   <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 700 }}>{r.order?.order_no}</span></td>
                   <td style={{ fontSize: 12 }}>{r.order?.customer?.customer_name || '—'}</td>
                   <td>
-                    <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{r.screw?.screw_code}</span>
-                    <span style={{ fontSize: 11, color: 'var(--muted)' }}> {r.screw?.screw_name}</span>
+                    <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{r.screw?.screw_name}</span>
                   </td>
                   <td className="num-cell" style={{ textAlign: 'right' }}>{r.remaining.toLocaleString()}</td>
                   <td style={{ fontSize: 12 }}>

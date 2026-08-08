@@ -158,7 +158,7 @@ export default function ConversionMaster() {
                 >
                   <option value="">— Select screw —</option>
                   {screws.map(s => (
-                    <option key={s.id} value={s.id}>{s.screw_code} – {s.screw_name}</option>
+                    <option key={s.id} value={s.id}>{s.screw_name}</option>
                   ))}
                 </select>
                 {formErrors.screw_id && <span className="field-error">{formErrors.screw_id}</span>}
@@ -236,7 +236,7 @@ export default function ConversionMaster() {
                         style={{ minWidth: 160 }}
                       >
                         {screws.map(s => (
-                          <option key={s.id} value={s.id}>{s.screw_code} – {s.screw_name}</option>
+                          <option key={s.id} value={s.id}>{s.screw_name}</option>
                         ))}
                       </select>
                     </td>
@@ -277,9 +277,8 @@ export default function ConversionMaster() {
                   <>
                     <td>
                       <span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>
-                        {row.screw?.screw_code}
+                        {row.screw?.screw_name}
                       </span>
-                      <span style={{ color: 'var(--muted)', fontSize: 12 }}> – {row.screw?.screw_name}</span>
                     </td>
                     <td style={{ fontSize: 12 }}>
                       {row.wire ? wireLabel(row.wire) : '—'}

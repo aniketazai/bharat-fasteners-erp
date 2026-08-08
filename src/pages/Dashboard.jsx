@@ -1161,7 +1161,6 @@ export default function Dashboard() {
                     })}
                     footer={list.length > 0 ? [
                       { label: `TOTAL (${list.length})` },
-                      { label: '' },
                       { label: IN(tot.produced), bold: true },
                       { label: IN(tot.plated), bold: true, color: C.green },
                       { label: tot.unplated > 0 ? IN(tot.unplated) : '—', bold: true, color: tot.unplated > 0 ? C.red : 'var(--dim)' },
