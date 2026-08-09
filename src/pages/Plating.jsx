@@ -6,10 +6,17 @@ import ExportButton from '../components/ExportButton'
 const today = () => new Date().toISOString().slice(0, 10)
 
 async function nextLotNo() {
-  const { data } = await supabase.from('plating_entries').select('lot_no').order('created_at', { ascending: false }).limit(1)
-  if (!data || !data.length) return 'PLT-0001'
-  const m = data[0].lot_no?.match(/PLT-(\d+)/)
-  return m ? `PLT-${String(parseInt(m[1]) + 1).padStart(4, '0')}` : 'PLT-0001'
+  // Scan ALL lot numbers and take the highest PLT-#### suffix, not just the
+  // most recently created row — a single out-of-pattern or out-of-order
+  // record would otherwise cause a duplicate lot number (and a failed
+  // insert), same issue that was fixed for order numbers in Orders.jsx.
+  const { data } = await supabase.from('plating_entries').select('lot_no')
+  let max = 0
+  for (const row of data || []) {
+    const m = row.lot_no?.match(/^PLT-(\d+)$/)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `PLT-${String(max + 1).padStart(4, '0')}`
 }
 
 const EMPTY = {
@@ -18,7 +25,7 @@ const EMPTY = {
 }
 
 // Searchable screw combobox — shows only produced screws, filters by typing
-function ScrewCombobox({ screws, value, onChange, hasError }) {
+function ScrewCombobox({ screws, value, onChange, hasError, availMap = {} }) {
   const label = (id) => {
     const s = screws.find(s => s.id === id)
     return s ? s.screw_name : ''
@@ -64,11 +71,14 @@ function ScrewCombobox({ screws, value, onChange, hasError }) {
           {visible.map(s => (
             <div key={s.id}
               onMouseDown={() => { onChange(s.id); setText(s.screw_name); setOpen(false) }}
-              style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--border)' }}
+              style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 8 }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
               onMouseLeave={e => e.currentTarget.style.background = '#fff'}
             >
               <span style={{ fontFamily: 'var(--cond)', fontWeight: 600 }}>{s.screw_name}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: (availMap[s.id]?.availNos || 0) > 0 ? 'var(--green)' : 'var(--dim)' }}>
+                {(availMap[s.id]?.availNos || 0).toLocaleString()} avail.
+              </span>
             </div>
           ))}
         </div>
@@ -87,10 +97,12 @@ function ScrewCombobox({ screws, value, onChange, hasError }) {
   )
 }
 
-function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedScrews, platTypes, loading, title, accentColor, ratioMap }) {
+function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedScrews, platTypes, loading, title, accentColor, ratioMap, availMap }) {
   const ratio = ratioMap[form.screw_id]
   const kgVal = parseFloat(form.sent_qty)
   const nosPreview = ratio && !isNaN(kgVal) && kgVal > 0 ? Math.round(kgVal * ratio) : null
+  const avail = availMap[form.screw_id]
+  const exceedsAvail = avail && !isNaN(kgVal) && kgVal > 0 && avail.availKg != null && kgVal > avail.availKg
 
   return (
     <div className="form-card" style={{ borderLeftColor: accentColor }}>
@@ -115,10 +127,17 @@ function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedS
               value={form.screw_id}
               onChange={id => setForm(f => ({ ...f, screw_id: id }))}
               hasError={!!errors.screw_id}
+              availMap={availMap}
             />
             {errors.screw_id && <span className="field-error">{errors.screw_id}</span>}
             {!loading && producedScrews.length === 0 && (
               <span style={{ fontSize: 11, color: 'var(--orange)' }}>No production entries yet — produce screws first.</span>
+            )}
+            {form.screw_id && avail && (
+              <div style={{ fontSize: 11, marginTop: 3, fontFamily: 'var(--cond)', fontWeight: 700, color: avail.availNos > 0 ? 'var(--green)' : 'var(--red)' }}>
+                In production, not yet sent: {avail.availNos.toLocaleString()} nos
+                {avail.availKg != null && ` (≈${avail.availKg} kg)`}
+              </div>
             )}
           </div>
           <div className="form-group">
@@ -147,6 +166,11 @@ function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedS
                 ≈ {nosPreview.toLocaleString()} nos
               </span>
             )}
+            {exceedsAvail && (
+              <span style={{ fontSize: 11, color: '#B45309', fontWeight: 700, marginTop: 2, display: 'block' }}>
+                ⚠ Exceeds available by {(kgVal - avail.availKg).toFixed(2)} kg
+              </span>
+            )}
           </div>
           <div className="form-group">
             <label>Vendor Name</label>
@@ -171,6 +195,7 @@ function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedS
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" />
           </div>
         </div>
+        {errors._ && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{errors._}</div>}
         <div className="form-actions">
           <button className="btn-add" type="submit" style={{ background: accentColor }} disabled={saving}>
             {saving ? 'SAVING…' : (title.startsWith('EDIT') ? 'SAVE CHANGES' : 'CONFIRM SEND')}
@@ -189,6 +214,7 @@ export default function Plating() {
   const [producedIds, setProducedIds] = useState(new Set())
   const [platTypes, setPlatTypes]     = useState([])
   const [ratioMap, setRatioMap]       = useState({}) // screw_id → conversion_ratio_per_kg (nos/kg)
+  const [availMap, setAvailMap]       = useState({}) // screw_id → { availNos, availKg } — produced minus already sent to plating
   const [loading, setLoading]         = useState(true)
 
   // Create form
@@ -220,7 +246,7 @@ export default function Plating() {
         .order('created_at', { ascending: false }),
       supabase.from('output_screw_master').select('id,screw_code,screw_name,rm_wire_id').eq('status', 'Active').order('screw_code'),
       supabase.from('plating_type_master').select('id,plating_name').eq('status', 'Active').order('plating_name'),
-      supabase.from('production_entries').select('screw_id'),
+      supabase.from('production_entries').select('screw_id,output_nos'),
       supabase.from('conversion_master').select('screw_id,wire_id,conversion_ratio_per_kg'),
     ])
     setEntries(eRes.data || [])
@@ -237,6 +263,25 @@ export default function Plating() {
       if (cv.wire_id === screwWire[cv.screw_id] || !rm[cv.screw_id]) rm[cv.screw_id] = cv.conversion_ratio_per_kg
     }
     setRatioMap(rm)
+
+    // Available to send = total produced (nos) − total already sent to plating (nos).
+    // Falls back to sent_qty × ratio for older rows saved before sent_qty_nos existed.
+    const producedNos = {}
+    for (const p of (prodRes.data || [])) {
+      producedNos[p.screw_id] = (producedNos[p.screw_id] || 0) + (p.output_nos || 0)
+    }
+    const sentNos = {}
+    for (const e of (eRes.data || [])) {
+      if (!e.screw_id) continue
+      const nos = e.sent_qty_nos != null ? e.sent_qty_nos : Math.round(parseFloat(e.sent_qty || 0) * (rm[e.screw_id] || 0))
+      sentNos[e.screw_id] = (sentNos[e.screw_id] || 0) + nos
+    }
+    const avail = {}
+    for (const sid of new Set([...Object.keys(producedNos), ...Object.keys(sentNos)])) {
+      const availNos = Math.max((producedNos[sid] || 0) - (sentNos[sid] || 0), 0)
+      avail[sid] = { availNos, availKg: rm[sid] ? +(availNos / rm[sid]).toFixed(2) : null }
+    }
+    setAvailMap(avail)
 
     setLoading(false)
   }
@@ -267,21 +312,35 @@ export default function Plating() {
     if (Object.keys(errs).length) { setErrors(errs); return }
     setSaving(true)
     const ratio = ratioMap[form.screw_id] || null
-    const { error } = await supabase.from('plating_entries').insert({
-      lot_no:               form.lot_no.trim().toUpperCase(),
-      send_date:            form.send_date || today(),
-      plating_type_id:      form.plating_type_id,
-      screw_id:             form.screw_id,
-      sent_qty:             parseFloat(form.sent_qty),
-      sent_qty_nos:         ratio ? Math.round(parseFloat(form.sent_qty) * ratio) : null,
-      vendor_name:          form.vendor_name.trim() || null,
-      vendor_challan_no:    form.vendor_challan_no.trim() || null,
-      expected_return_date: form.expected_return_date || null,
-      notes:                form.notes.trim() || null,
-      created_by:           user?.id,
-    })
+
+    let lotNo = form.lot_no.trim().toUpperCase()
+    let error
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await supabase.from('plating_entries').insert({
+        lot_no:               lotNo,
+        send_date:            form.send_date || today(),
+        plating_type_id:      form.plating_type_id,
+        screw_id:             form.screw_id,
+        sent_qty:             parseFloat(form.sent_qty),
+        sent_qty_nos:         ratio ? Math.round(parseFloat(form.sent_qty) * ratio) : null,
+        vendor_name:          form.vendor_name.trim() || null,
+        vendor_challan_no:    form.vendor_challan_no.trim() || null,
+        expected_return_date: form.expected_return_date || null,
+        notes:                form.notes.trim() || null,
+        created_by:           user?.id,
+      })
+      error = res.error
+      // 23505 = Postgres unique-violation. If it's specifically the lot_no
+      // that collided (e.g. two people saved at the same moment), regenerate
+      // the next number and try again instead of just failing.
+      if (error?.code === '23505' && error.message?.includes('lot_no')) {
+        lotNo = await nextLotNo()
+        continue
+      }
+      break
+    }
     setSaving(false)
-    if (error) { setErrors({ lot_no: error.message }); return }
+    if (error) { setErrors({ _: `Could not save: ${error.message}` }); return }
     setShowForm(false)
     load()
   }
@@ -323,7 +382,7 @@ export default function Plating() {
       notes:                editForm.notes.trim() || null,
     }).eq('id', editId)
     setEditSav(false)
-    if (error) { setEditErrs({ lot_no: error.message }); return }
+    if (error) { setEditErrs({ _: `Could not save: ${error.message}` }); return }
     setEditId(null)
     load()
   }
@@ -429,6 +488,7 @@ export default function Plating() {
           title="SEND TO PLATING"
           accentColor="var(--accent)"
           ratioMap={ratioMap}
+          availMap={availMap}
         />
       )}
 
@@ -444,6 +504,7 @@ export default function Plating() {
           title={`EDIT — ${editForm.lot_no}`}
           accentColor="var(--blue)"
           ratioMap={ratioMap}
+          availMap={availMap}
         />
       )}
 

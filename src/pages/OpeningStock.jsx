@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 const today = () => new Date().toISOString().slice(0, 10)
 
 const EMPTY_WIRE = { wire_id: '', quantity_kg: '', entry_date: today(), notes: '' }
-const EMPTY_FG   = { screw_id: '', quantity_nos: '', stock_type: 'PLATED', entry_date: today(), notes: '' }
+const EMPTY_FG   = { screw_id: '', quantity_nos: '', stock_type: 'PLATED', direction: 'ADD', entry_date: today(), notes: '' }
 
 const TYPE_STYLE = {
   PLATED:   { bg: '#F0FDF4', color: '#16A34A', border: '#BBF7D0' },
@@ -117,6 +117,7 @@ export default function OpeningStock() {
       screw_id:    fgForm.screw_id,
       quantity_nos: parseInt(fgForm.quantity_nos),
       stock_type:  fgForm.stock_type,
+      direction:   fgForm.direction,
       entry_date:  fgForm.entry_date || today(),
       notes:       fgForm.notes.trim() || null,
     }
@@ -134,7 +135,7 @@ export default function OpeningStock() {
 
   function openFgEdit(row) {
     setFgEdit(row.id)
-    setFgForm({ screw_id: row.screw_id, quantity_nos: String(row.quantity_nos), stock_type: row.stock_type, entry_date: row.entry_date, notes: row.notes || '' })
+    setFgForm({ screw_id: row.screw_id, quantity_nos: String(row.quantity_nos), stock_type: row.stock_type, direction: row.direction || 'ADD', entry_date: row.entry_date, notes: row.notes || '' })
     setFgErr({})
   }
 
@@ -150,9 +151,10 @@ export default function OpeningStock() {
   const lbl = { fontSize: 11, fontFamily: 'var(--cond)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '.06em', textTransform: 'uppercase', display: 'block', marginBottom: 4 }
   const btnSm = { fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: 'var(--cond)', fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)' }
 
+  const signedNos = r => r.direction === 'REMOVE' ? -r.quantity_nos : r.quantity_nos
   const totalWireKg = wireRows.reduce((s, r) => s + parseFloat(r.quantity_kg || 0), 0)
-  const totalFgPlated   = fgRows.filter(r => r.stock_type === 'PLATED').reduce((s, r) => s + r.quantity_nos, 0)
-  const totalFgUnplated = fgRows.filter(r => r.stock_type === 'UNPLATED').reduce((s, r) => s + r.quantity_nos, 0)
+  const totalFgPlated   = fgRows.filter(r => r.stock_type === 'PLATED').reduce((s, r) => s + signedNos(r), 0)
+  const totalFgUnplated = fgRows.filter(r => r.stock_type === 'UNPLATED').reduce((s, r) => s + signedNos(r), 0)
 
   return (
     <div className="main page-enter">
@@ -335,6 +337,26 @@ export default function OpeningStock() {
                 </div>
               </div>
               <div className="form-group">
+                <label style={lbl}>Direction *</label>
+                <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
+                  {[{ k: 'ADD', l: '+ ADD', c: '#16A34A' }, { k: 'REMOVE', l: '− REMOVE', c: '#DC2626' }].map(d => {
+                    const active = fgForm.direction === d.k
+                    return (
+                      <button key={d.k} type="button" onClick={() => setFgForm(f => ({ ...f, direction: d.k }))}
+                        style={{
+                          flex: 1, padding: '8px 0', borderRadius: 6, cursor: 'pointer',
+                          fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 12, letterSpacing: '.05em',
+                          background: active ? d.c + '18' : 'var(--bg2)',
+                          border: `2px solid ${active ? d.c : 'var(--border)'}`,
+                          color: active ? d.c : 'var(--muted)',
+                        }}>
+                        {d.l}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="form-group">
                 <label style={lbl}>Date</label>
                 <input type="date" style={inp} value={fgForm.entry_date}
                   onChange={e => setFgForm(f => ({ ...f, entry_date: e.target.value }))} />
@@ -377,8 +399,8 @@ export default function OpeningStock() {
                       <td style={{ color: 'var(--dim)', fontSize: 11 }}>{i + 1}</td>
                       <td style={{ fontSize: 12, color: 'var(--muted)' }}>{r.entry_date}</td>
                       <td style={{ fontSize: 12 }}>{r.screw?.screw_name || '—'}</td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 14 }}>
-                        {r.quantity_nos.toLocaleString()}
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 14, color: r.direction === 'REMOVE' ? '#DC2626' : 'inherit' }}>
+                        {r.direction === 'REMOVE' ? '−' : '+'}{r.quantity_nos.toLocaleString()}
                       </td>
                       <td>
                         <span style={{ display: 'inline-block', padding: '2px 9px', borderRadius: 10, fontSize: 10, fontFamily: 'var(--cond)', fontWeight: 700, letterSpacing: '.06em', background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>

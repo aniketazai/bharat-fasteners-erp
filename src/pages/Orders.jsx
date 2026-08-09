@@ -66,7 +66,7 @@ export default function Orders() {
       supabase.from('conversion_master').select('screw_id,wire_id,conversion_ratio_per_kg'),
       supabase.from('production_entries').select('screw_id, output_nos'),
       supabase.from('plating_entries').select('screw_id, received_qty_nos'),
-      supabase.from('fg_opening_stock').select('screw_id, quantity_nos, stock_type'),
+      supabase.from('fg_opening_stock').select('screw_id, quantity_nos, stock_type, direction'),
     ])
 
     setOrders(oRes.data || [])
@@ -111,8 +111,9 @@ export default function Orders() {
     }
     for (const o of (openRes.data || [])) {
       if (!o.screw_id) continue
-      produced[o.screw_id] = (produced[o.screw_id] || 0) + (o.quantity_nos || 0)
-      if (o.stock_type === 'PLATED') plated[o.screw_id] = (plated[o.screw_id] || 0) + (o.quantity_nos || 0)
+      const signed = o.direction === 'REMOVE' ? -(o.quantity_nos || 0) : (o.quantity_nos || 0)
+      produced[o.screw_id] = (produced[o.screw_id] || 0) + signed
+      if (o.stock_type === 'PLATED') plated[o.screw_id] = (plated[o.screw_id] || 0) + signed
     }
     // Global dispatched per screw = sum of dispatched_qty across ALL order items for that screw
     const dispatchedByScrew = {}
@@ -444,6 +445,7 @@ export default function Orders() {
                       <th style={{ width: 24 }}>#</th>
                       <th>Screw Type *</th>
                       <th>RM Wire</th>
+                      <th style={{ textAlign: 'right' }}>Current Stock</th>
                       <th style={{ textAlign: 'right' }}>Order Qty (nos) *</th>
                       <th style={{ width: 40 }}></th>
                     </tr>
@@ -490,6 +492,15 @@ export default function Orders() {
                                 </>
                             }
                           </td>
+                          <td style={{ textAlign: 'right' }}>
+                            {item.screw_id
+                              ? <span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13, color: (fgMap[item.screw_id]?.fgReady || 0) > 0 ? 'var(--green)' : 'var(--dim)' }}
+                                  title="Finished-goods stock currently ready to dispatch">
+                                  {(fgMap[item.screw_id]?.fgReady || 0).toLocaleString()}
+                                </span>
+                              : <span style={{ color: 'var(--dim)' }}>—</span>
+                            }
+                          </td>
                           <td>
                             {locked
                               ? <span style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13, color: 'var(--muted)', display: 'block', textAlign: 'right' }}>
@@ -503,6 +514,11 @@ export default function Orders() {
                                   placeholder="e.g. 5000" />
                             }
                             {errors[`q${i}`] && <span className="field-error">{errors[`q${i}`]}</span>}
+                            {!locked && item.screw_id && item.order_qty && parseInt(item.order_qty) > (fgMap[item.screw_id]?.fgReady || 0) && (
+                              <div style={{ fontSize: 10, color: '#B45309', marginTop: 3, textAlign: 'right' }}>
+                                ⚠ Exceeds stock by {(parseInt(item.order_qty) - (fgMap[item.screw_id]?.fgReady || 0)).toLocaleString()}
+                              </div>
+                            )}
                             {item.screw_id && item.order_qty && ratioMap[item.screw_id] && (
                               <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3, textAlign: 'right' }}>
                                 Est. RM: {(parseInt(item.order_qty) / ratioMap[item.screw_id]).toFixed(2)} kg

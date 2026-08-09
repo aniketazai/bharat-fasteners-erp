@@ -10,6 +10,7 @@ const EMPTY = {
   machine_id: '', wire_id: '',
   order_item_id: '', screw_id: '',
   actual_output_kg: '', wire_issued_kg: '',
+  die_no: '', die_date: '', punch_no: '', punch_date: '',
   notes: '',
 }
 
@@ -407,7 +408,7 @@ export default function Production() {
     setLoading(true)
     const [eRes, mRes, wRes, sRes, cRes, custRes, oRes, oiRes, lotRes, prodAllRes, dispAllRes] = await Promise.all([
       supabase.from('production_entries')
-        .select('*, order:order_id(order_no), machine:machine_id(machine_name,machine_code), wire:wire_id(diameter_mm,grade), screw:screw_id(screw_code,screw_name)')
+        .select('*, order:order_id(order_no), machine:machine_id(machine_name,machine_code,machine_type), wire:wire_id(diameter_mm,grade), screw:screw_id(screw_code,screw_name)')
         .order('entry_date', { ascending: false }).order('created_at', { ascending: false }).limit(100),
       supabase.from('machines').select('id,machine_name,machine_code,machine_type').eq('status','Active').order('machine_name'),
       supabase.from('rm_wire_master').select('id,diameter_mm,grade').eq('status','Active').order('diameter_mm'),
@@ -533,6 +534,11 @@ export default function Production() {
       if (field === 'screw_id') {
         s.wire_id = wireIdForScrew(val)
       }
+      if (field === 'machine_id') {
+        const mType = machines.find(m => m.id === val)?.machine_type
+        if (mType !== 'Header') { s.punch_no = ''; s.punch_date = '' }
+        if (mType !== 'Header' && mType !== 'Roller') { s.die_no = ''; s.die_date = '' }
+      }
       if (field === 'actual_output_kg' && val && parseFloat(val) > 0) {
         if (!prev.wire_issued_kg || parseFloat(prev.wire_issued_kg) === parseFloat(prev.actual_output_kg)) {
           s.wire_issued_kg = val
@@ -556,6 +562,7 @@ export default function Production() {
   const lossLabel   = { ok: '✓ Normal', watch: '⚠ Watch', high: '✗ High Loss' }[lossStatus]
   const availStock  = single.wire_id != null ? (wireStockMap[single.wire_id] ?? null) : null
   const stockOk     = availStock === null || wireKg <= availStock
+  const selMachineType = machines.find(m => m.id === single.machine_id)?.machine_type
 
   // ── validate ──
 
@@ -586,6 +593,10 @@ export default function Production() {
     const wireVal      = parseFloat(single.wire_issued_kg)
     const output_nos   = outputPcs || 0
     const expected_nos = expectedPcs || null
+    const die_no    = selMachineType === 'Header' || selMachineType === 'Roller' ? (single.die_no.trim() || null) : null
+    const die_date  = selMachineType === 'Header' || selMachineType === 'Roller' ? (single.die_date || null) : null
+    const punch_no   = selMachineType === 'Header' ? (single.punch_no.trim() || null) : null
+    const punch_date = selMachineType === 'Header' ? (single.punch_date || null) : null
 
     if (editEntryId) {
       const { error } = await supabase.from('production_entries').update({
@@ -595,6 +606,7 @@ export default function Production() {
         wire_used_kg: wireVal,
         expected_nos,
         output_nos,
+        die_no, die_date, punch_no, punch_date,
         notes:        single.notes.trim() || null,
       }).eq('id', editEntryId)
 
@@ -624,6 +636,7 @@ export default function Production() {
         wire_used_kg: wireVal,
         expected_nos,
         output_nos,
+        die_no, die_date, punch_no, punch_date,
         notes:        single.notes.trim() || null,
         created_by:   user?.id,
       })
@@ -664,6 +677,10 @@ export default function Production() {
       screw_id:      entry.screw_id || '',
       actual_output_kg: outKgCalc,
       wire_issued_kg:   parseFloat(entry.wire_used_kg || 0).toFixed(2),
+      die_no:    entry.die_no || '',
+      die_date:  entry.die_date || '',
+      punch_no:   entry.punch_no || '',
+      punch_date: entry.punch_date || '',
       notes:         entry.notes || '',
     })
     setOrigWireKg(parseFloat(entry.wire_used_kg || 0))
@@ -891,6 +908,32 @@ export default function Production() {
                 </div>
               </div>
 
+              {/* Row 1b: Die / Punch tooling — Header gets both, Roller gets Die only */}
+              {(selMachineType === 'Header' || selMachineType === 'Roller') && (
+                <div className="form-grid" style={{ marginBottom: 10 }}>
+                  <div className="form-group">
+                    <label>Die</label>
+                    <input value={single.die_no} onChange={e => setSingleField('die_no', e.target.value)} placeholder="Die no." />
+                  </div>
+                  <div className="form-group">
+                    <label>Die Date</label>
+                    <input type="date" value={single.die_date} onChange={e => setSingleField('die_date', e.target.value)} />
+                  </div>
+                  {selMachineType === 'Header' && (
+                    <>
+                      <div className="form-group">
+                        <label>Punch</label>
+                        <input value={single.punch_no} onChange={e => setSingleField('punch_no', e.target.value)} placeholder="Punch no." />
+                      </div>
+                      <div className="form-group">
+                        <label>Punch Date</label>
+                        <input type="date" value={single.punch_date} onChange={e => setSingleField('punch_date', e.target.value)} />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Row 2: Wire Issued · Output · Live loss strip */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <div className="form-group">
@@ -1076,6 +1119,8 @@ export default function Production() {
               <th>Date</th>
               <th>Order</th>
               <th>Machine</th>
+              <th>Die</th>
+              <th>Punch</th>
               <th>Wire</th>
               <th>Screw</th>
               <th style={{ textAlign: 'right' }}>Wire Used (kg)</th>
@@ -1087,8 +1132,8 @@ export default function Production() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={12} className="empty">Loading…</td></tr>}
-            {!loading && entries.length === 0 && <tr><td colSpan={12} className="empty">No production entries yet.</td></tr>}
+            {loading && <tr><td colSpan={14} className="empty">Loading…</td></tr>}
+            {!loading && entries.length === 0 && <tr><td colSpan={14} className="empty">No production entries yet.</td></tr>}
             {entries.map((e, i) => {
               const loss    = e.expected_nos != null ? Math.max(e.expected_nos - e.output_nos, 0) : null
               const lossPct = e.expected_nos ? ((Math.max(e.expected_nos - e.output_nos, 0) / e.expected_nos) * 100).toFixed(1) : null
@@ -1098,6 +1143,16 @@ export default function Production() {
                   <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.entry_date}</td>
                   <td style={{ fontSize: 12 }}>{e.order?.order_no || '—'}</td>
                   <td style={{ fontSize: 12 }}>{e.machine?.machine_code || e.machine?.machine_name || '—'}</td>
+                  <td style={{ fontSize: 12 }}>
+                    {e.die_no
+                      ? <>{e.die_no}{e.die_date && <div style={{ fontSize: 10, color: 'var(--muted)' }}>{e.die_date}</div>}</>
+                      : <span style={{ color: 'var(--dim)' }}>—</span>}
+                  </td>
+                  <td style={{ fontSize: 12 }}>
+                    {e.punch_no
+                      ? <>{e.punch_no}{e.punch_date && <div style={{ fontSize: 10, color: 'var(--muted)' }}>{e.punch_date}</div>}</>
+                      : <span style={{ color: 'var(--dim)' }}>—</span>}
+                  </td>
                   <td style={{ fontSize: 12 }}>{e.wire ? `${e.wire.diameter_mm}mm – ${e.wire.grade}` : '—'}</td>
                   <td><span style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>{e.screw?.screw_name}</span></td>
                   <td className="num-cell" style={{ textAlign: 'right' }}>{parseFloat(e.wire_used_kg).toFixed(2)}</td>
@@ -1124,7 +1179,7 @@ export default function Production() {
             return (
               <tfoot>
                 <tr>
-                  {TFD(`TOTAL — ${entries.length} entries`, { colSpan: 6, letterSpacing: '.04em' })}
+                  {TFD(`TOTAL — ${entries.length} entries`, { colSpan: 8, letterSpacing: '.04em' })}
                   {TFD(tw.toFixed(2), { textAlign: 'right' })}
                   {TFD(te > 0 ? te.toLocaleString() : '—', { textAlign: 'right', color: 'var(--muted)' })}
                   {TFD(to.toLocaleString(), { textAlign: 'right', color: 'var(--green)' })}

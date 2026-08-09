@@ -448,7 +448,7 @@ export default function Dashboard() {
       supabase.from('dispatch_entries').select('dispatch_date,order_id,order_item_id,quantity_nos')
         .gte('dispatch_date', from).lte('dispatch_date', to),
       supabase.from('conversion_master').select('screw_id,conversion_ratio_per_kg'),
-      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type,entry_date'),
+      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type,direction,entry_date'),
     ])
 
     const allOrd  = oRes.data    || []
@@ -516,8 +516,9 @@ export default function Dashboard() {
     // Opening stock: add to produced + plated BEFORE fgTotal; also backfill screwInfo for OS-only screws
     for (const o of fgOpen) {
       if (!o.screw_id) continue
-      prodBySid[o.screw_id] = (prodBySid[o.screw_id] || 0) + o.quantity_nos
-      if (o.stock_type === 'PLATED') platRecvBySid[o.screw_id] = (platRecvBySid[o.screw_id] || 0) + o.quantity_nos
+      const signed = o.direction === 'REMOVE' ? -o.quantity_nos : o.quantity_nos
+      prodBySid[o.screw_id] = (prodBySid[o.screw_id] || 0) + signed
+      if (o.stock_type === 'PLATED') platRecvBySid[o.screw_id] = (platRecvBySid[o.screw_id] || 0) + signed
       if (screwLookup[o.screw_id] && !screwInfo[o.screw_id]) screwInfo[o.screw_id] = screwLookup[o.screw_id]
     }
 

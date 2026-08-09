@@ -152,6 +152,7 @@ export default function Machines() {
                   onChange={e => setForm(f => ({ ...f, machine_type: e.target.value }))}
                 >
                   <option value="Header">Header</option>
+                  <option value="Roller">Roller</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
@@ -225,6 +226,7 @@ export default function Machines() {
                         style={{ width: 90 }}
                       >
                         <option value="Header">Header</option>
+                        <option value="Roller">Roller</option>
                         <option value="Other">Other</option>
                       </select>
                     </td>

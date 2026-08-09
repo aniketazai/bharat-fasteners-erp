@@ -6,6 +6,7 @@ export default function RMRequirement() {
   const [rows, setRows]       = useState([])
   const [loading, setLoading] = useState(true)
   const [stock, setStock]     = useState({}) // wire_id → current_kg
+  const [wireMap, setWireMap] = useState({}) // wire_id → {diameter_mm,grade}
 
   useEffect(() => { load() }, [])
 
@@ -36,6 +37,12 @@ export default function RMRequirement() {
     // 4. RM lot stock
     const { data: lotData } = await supabase.from('rm_lot')
       .select('wire_id, txn_type, quantity_kg')
+
+    // 5. Wire master (needed for stock summary labels — a wire can have
+    // stock without appearing in any open order item below)
+    const { data: wireData } = await supabase.from('rm_wire_master')
+      .select('id, diameter_mm, grade')
+    setWireMap(Object.fromEntries((wireData || []).map(w => [w.id, w])))
 
     // Stock per wire
     const stockMap = {}
@@ -177,10 +184,8 @@ export default function RMRequirement() {
             <tbody>
               {Object.entries(stock).length === 0 && <tr><td colSpan={3} className="empty">No RM Lot entries yet.</td></tr>}
               {Object.entries(stock).map(([wid, kg]) => {
-                const row = rows.find(r => r.wireId === wid)
-                const wireLabel = row?.wireInfo
-                  ? `${row.wireInfo.diameter_mm}mm – ${row.wireInfo.grade}`
-                  : `Wire …${wid.slice(-6)}`
+                const w = wireMap[wid]
+                const wireLabel = w ? `${w.diameter_mm}mm – ${w.grade}` : 'Unknown wire'
                 return (
                   <tr key={wid}>
                     <td style={{ fontSize: 12, fontFamily: 'var(--cond)', fontWeight: 600 }}>{wireLabel}</td>

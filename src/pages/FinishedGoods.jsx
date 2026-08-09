@@ -2,6 +2,10 @@ import { useEffect, useState, Fragment } from 'react'
 import { ChevronDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
+
+const today = () => new Date().toISOString().slice(0, 10)
+const EMPTY_ADJ = { direction: 'add', quantity_nos: '', stock_type: 'PLATED', entry_date: today(), notes: '' }
 
 function downloadExcel(filename, headers, rows) {
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
@@ -21,11 +25,19 @@ const ST = {
 }
 
 export default function FinishedGoods() {
+  const { user } = useAuth()
   const [rows, setRows]       = useState([])
   const [ordersByScrew, setOrdersByScrew] = useState({}) // screw_id → [{order_no, customer_name, remaining}, ...]
   const [expanded, setExpanded] = useState({}) // screw_id → bool
   const [loading, setLoading] = useState(true)
   const [filter, setFilter]   = useState('All')
+
+  // Stock correction (writes to fg_opening_stock, same table Orders/Dispatch/
+  // Dashboard already read — so a correction here stays consistent everywhere)
+  const [adjustSid, setAdjustSid] = useState(null)
+  const [adjForm, setAdjForm]     = useState(EMPTY_ADJ)
+  const [adjErr, setAdjErr]       = useState({})
+  const [adjSaving, setAdjSaving] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -41,7 +53,7 @@ export default function FinishedGoods() {
       supabase.from('dispatch_entries')
         .select('order_item_id, quantity_nos'),
       supabase.from('fg_opening_stock')
-        .select('screw_id, quantity_nos, stock_type'),
+        .select('screw_id, quantity_nos, stock_type, direction'),
       supabase.from('output_screw_master')
         .select('id, screw_code, screw_name'),
       // Order items with their parent order — filtered to open ones client-side
@@ -69,12 +81,15 @@ export default function FinishedGoods() {
       platedMap[p.screw_id] = (platedMap[p.screw_id] || 0) + (p.received_qty_nos || 0)
     }
 
-    // Opening stock: adds to produced + plated (PLATED) or produced only (UNPLATED)
+    // Opening stock / corrections: adds to produced + plated (PLATED) or
+    // produced only (UNPLATED). direction flips the sign — quantity_nos
+    // itself is always stored positive (DB CHECK), REMOVE entries subtract.
     for (const o of (openRes.data || [])) {
       if (!o.screw_id) continue
+      const signed = o.direction === 'REMOVE' ? -o.quantity_nos : o.quantity_nos
       if (!prodMap[o.screw_id]) prodMap[o.screw_id] = { code: screwLookup[o.screw_id]?.code || '—', name: screwLookup[o.screw_id]?.name || '—', produced: 0 }
-      prodMap[o.screw_id].produced += o.quantity_nos
-      if (o.stock_type === 'PLATED') platedMap[o.screw_id] = (platedMap[o.screw_id] || 0) + o.quantity_nos
+      prodMap[o.screw_id].produced += signed
+      if (o.stock_type === 'PLATED') platedMap[o.screw_id] = (platedMap[o.screw_id] || 0) + signed
     }
 
     // Dispatched per screw (via order_items mapping)
@@ -129,6 +144,41 @@ export default function FinishedGoods() {
 
   function toggleExpand(sid) {
     setExpanded(prev => ({ ...prev, [sid]: !prev[sid] }))
+  }
+
+  function openAdjust(sid) {
+    setExpanded(prev => ({ ...prev, [sid]: false }))
+    setAdjustSid(sid)
+    setAdjForm(EMPTY_ADJ)
+    setAdjErr({})
+  }
+
+  function validateAdj(f) {
+    const e = {}
+    const n = parseInt(f.quantity_nos)
+    if (!f.quantity_nos || isNaN(n) || n <= 0) e.quantity_nos = 'Enter a quantity greater than 0.'
+    return e
+  }
+
+  async function saveAdjust(ev) {
+    ev.preventDefault()
+    const errs = validateAdj(adjForm)
+    if (Object.keys(errs).length) { setAdjErr(errs); return }
+    setAdjSaving(true)
+    const n = parseInt(adjForm.quantity_nos)
+    const { error } = await supabase.from('fg_opening_stock').insert({
+      screw_id:     adjustSid,
+      quantity_nos: n,
+      direction:    adjForm.direction === 'remove' ? 'REMOVE' : 'ADD',
+      stock_type:   adjForm.stock_type,
+      entry_date:   adjForm.entry_date || today(),
+      notes:        adjForm.notes.trim() || null,
+      created_by:   user?.id,
+    })
+    setAdjSaving(false)
+    if (error) { setAdjErr({ _: `Could not save: ${error.message}` }); return }
+    setAdjustSid(null)
+    load()
   }
 
   const counts = { PLATED: 0, PARTIAL: 0, UNPLATED: 0 }
@@ -188,6 +238,84 @@ export default function FinishedGoods() {
         )}>↓ EXPORT EXCEL</button>
       </div>
 
+      {adjustSid && (() => {
+        const row = rows.find(r => r.sid === adjustSid)
+        return (
+          <div className="form-card" style={{ borderLeftColor: 'var(--accent)' }}>
+            <div className="form-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>ADJUST STOCK — {row?.name}</span>
+              <button className="btn-clear" style={{ margin: 0 }} onClick={() => setAdjustSid(null)}>✕</button>
+            </div>
+            <form onSubmit={saveAdjust}>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Direction</label>
+                  <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
+                    {[{ k: 'add', l: '+ ADD STOCK', c: '#16A34A' }, { k: 'remove', l: '− REMOVE STOCK', c: '#DC2626' }].map(d => {
+                      const active = adjForm.direction === d.k
+                      return (
+                        <button key={d.k} type="button" onClick={() => setAdjForm(f => ({ ...f, direction: d.k }))}
+                          style={{
+                            flex: 1, padding: '8px 0', borderRadius: 6, cursor: 'pointer',
+                            fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 12, letterSpacing: '.05em',
+                            background: active ? d.c + '18' : 'var(--bg2)',
+                            border: `2px solid ${active ? d.c : 'var(--border)'}`,
+                            color: active ? d.c : 'var(--muted)',
+                          }}>{d.l}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Quantity (nos) *</label>
+                  <input type="number" min="1"
+                    className={adjErr.quantity_nos ? 'error' : ''}
+                    value={adjForm.quantity_nos}
+                    onChange={e => setAdjForm(f => ({ ...f, quantity_nos: e.target.value }))}
+                    placeholder="e.g. 50" />
+                  {adjErr.quantity_nos && <span className="field-error">{adjErr.quantity_nos}</span>}
+                </div>
+                <div className="form-group">
+                  <label>Stock Type</label>
+                  <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
+                    {['PLATED', 'UNPLATED'].map(t => {
+                      const s = ST[t]
+                      const active = adjForm.stock_type === t
+                      return (
+                        <button key={t} type="button" onClick={() => setAdjForm(f => ({ ...f, stock_type: t }))}
+                          style={{
+                            flex: 1, padding: '8px 0', borderRadius: 6, cursor: 'pointer',
+                            fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 12, letterSpacing: '.05em',
+                            background: active ? s.bg : 'var(--bg2)',
+                            border: `2px solid ${active ? s.color : 'var(--border)'}`,
+                            color: active ? s.color : 'var(--muted)',
+                          }}>{t}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Date</label>
+                  <input type="date" value={adjForm.entry_date}
+                    onChange={e => setAdjForm(f => ({ ...f, entry_date: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>Reason / Notes</label>
+                  <input value={adjForm.notes}
+                    onChange={e => setAdjForm(f => ({ ...f, notes: e.target.value }))}
+                    placeholder="e.g. Physical count correction, damaged stock" />
+                </div>
+              </div>
+              {adjErr._ && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{adjErr._}</div>}
+              <div className="form-actions">
+                <button className="btn-add" type="submit" disabled={adjSaving}>{adjSaving ? 'SAVING…' : 'SAVE ADJUSTMENT'}</button>
+                <button className="btn-clear" type="button" onClick={() => setAdjustSid(null)}>CANCEL</button>
+              </div>
+            </form>
+          </div>
+        )
+      })()}
+
       <div className="tbl-wrap">
         <table data-export>
           <thead>
@@ -202,11 +330,12 @@ export default function FinishedGoods() {
               <th style={{ textAlign: 'right' }}>FG Stock</th>
               <th>Status</th>
               <th style={{ textAlign: 'right' }}>Open Orders</th>
+              <th data-no-export style={{ width: 80 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={10} className="empty">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={10} className="empty">No finished goods yet.</td></tr>}
+            {loading && <tr><td colSpan={11} className="empty">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={11} className="empty">No finished goods yet.</td></tr>}
             {filtered.map((r, i) => {
               const s = ST[r.status]
               const waitingOrders = ordersByScrew[r.sid] || []
@@ -258,6 +387,9 @@ export default function FinishedGoods() {
                         </span>
                       : <span style={{ color: 'var(--dim)' }}>—</span>}
                   </td>
+                  <td className="no-print">
+                    <button className="btn-icon" style={{ fontSize: 10, color: 'var(--blue)' }} onClick={() => openAdjust(r.sid)}>ADJUST</button>
+                  </td>
                 </tr>
 
                 {isExp && waitingOrders.length > 0 && (
@@ -265,7 +397,7 @@ export default function FinishedGoods() {
                     <td colSpan={11} style={{ padding: 0 }}>
                       <div style={{ padding: '10px 12px 14px 40px' }}>
                         <div style={{ fontFamily: 'var(--cond)', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>
-                          Open Orders Waiting On {r.code}
+                          Open Orders Waiting On {r.name}
                         </div>
                         <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                           <thead>
@@ -326,6 +458,7 @@ export default function FinishedGoods() {
                   {td(tot.fgStock.toLocaleString(), { textAlign: 'right', color: '#16A34A', fontSize: 14 })}
                   {td('')}
                   {td(neededTotal > 0 ? neededTotal.toLocaleString() : '—', { textAlign: 'right', color: 'var(--accent)' })}
+                  {td('')}
                 </tr>
               </tfoot>
             )

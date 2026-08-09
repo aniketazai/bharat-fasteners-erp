@@ -170,12 +170,12 @@ export default function Dispatch() {
           .select('dispatched_qty')
           .eq('screw_id', item.screw_id),
         supabase.from('fg_opening_stock')
-          .select('quantity_nos')
+          .select('quantity_nos, direction')
           .eq('screw_id', item.screw_id)
           .eq('stock_type', 'PLATED'),
       ])
       const platReceived    = (platRes.data  || []).reduce((s, p) => s + (p.received_qty_nos  || 0), 0)
-      const openingPlated   = (openRes.data  || []).reduce((s, o) => s + (o.quantity_nos  || 0), 0)
+      const openingPlated   = (openRes.data  || []).reduce((s, o) => s + (o.direction === 'REMOVE' ? -(o.quantity_nos || 0) : (o.quantity_nos || 0)), 0)
       const totalReceived   = platReceived + openingPlated
       const totalDispatched = (orderItemRes.data || []).reduce((s, i) => s + (i.dispatched_qty || 0), 0)
       const available       = Math.max(0, totalReceived - totalDispatched)
