@@ -442,7 +442,7 @@ export default function Dashboard() {
       supabase.from('rm_lot').select('wire_id,txn_type,quantity_kg,lot_date'),
       supabase.from('rm_wire_master').select('id,diameter_mm,grade,min_stock_kg').eq('status','Active'),
       supabase.from('order_items').select('id,order_id,screw_id,order_qty,dispatched_qty,screw:screw_id(screw_code,screw_name)'),
-      supabase.from('plating_entries').select('screw_id,sent_qty,received_qty,send_date,receive_date'),
+      supabase.from('plating_entries').select('screw_id,sent_qty,received_qty,sent_qty_nos,received_qty_nos,vendor_id,vendor_name,send_date,receive_date, vendor:vendor_id(vendor_name)'),
       supabase.from('production_entries').select('entry_date,wire_used_kg').gte('entry_date', sixAgo),
       supabase.from('production_entries').select('screw_id,output_nos,entry_date,wire_used_kg'),
       supabase.from('dispatch_entries').select('dispatch_date,order_id,order_item_id,quantity_nos')
@@ -501,6 +501,22 @@ export default function Dashboard() {
       if (pend > 0) vendorBySid[p.screw_id] = (vendorBySid[p.screw_id] || 0) + pend
       if (p.received_qty > 0) platRecvBySid[p.screw_id] = (platRecvBySid[p.screw_id] || 0) + (p.received_qty || 0)
     }
+
+    // Plating — real-time "who has how much right now" (nos-based, by vendor)
+    const platVendorMap = {}
+    let platAtVendorTotal = 0
+    for (const p of plat) {
+      const sentNos = p.sent_qty_nos || 0
+      const pendingNos = Math.max(sentNos - (p.received_qty_nos || 0), 0)
+      if (pendingNos <= 0) continue
+      platAtVendorTotal += pendingNos
+      const vname = p.vendor?.vendor_name || p.vendor_name || 'Unassigned'
+      if (!platVendorMap[vname]) platVendorMap[vname] = { name: vname, atVendor: 0, lots: 0 }
+      platVendorMap[vname].atVendor += pendingNos
+      platVendorMap[vname].lots += 1
+    }
+    const platByVendor = Object.values(platVendorMap).sort((a, b) => b.atVendor - a.atVendor)
+
     const itemIdToScrew = Object.fromEntries(items.map(it => [it.id, it.screw_id]))
     const dispBySid = {}
     for (const d2 of allDisp) {
@@ -775,6 +791,7 @@ export default function Dashboard() {
       fgFlow: { opening: fgOpening, produced: fgProduced, dispatched: fgDispatched, closing: fgClosing },
       wireStockBar, rmConsumption, stockHealth,
       custDispBar, platDonut, pendingDisp,
+      platByVendor, platAtVendorTotal,
       fgStockList,
     })
     setLoading(false)
@@ -1196,6 +1213,37 @@ export default function Dashboard() {
                   <span key={w.wire} className={`badge ${w.status === 'OK' ? 'b-ok' : w.status === 'LOW' ? 'b-warn' : 'b-red'}`}>{w.status}</span>,
                 ])}
                 emptyMsg="No wire stock data."
+              />
+            </Box>
+          </>}
+        </div>
+      </Card>
+
+      {/* ═══════ SECTION 4B — PLATING ANALYSIS ═══════════════════════════════ */}
+      <Card accent={C.pink} id="card-plating">
+        <CardHdr label="Plating Analysis" accent={C.pink} cardId="card-plating"
+          onExport={d ? () => downloadCSV('plating-analysis.csv',
+            ['Vendor', 'With Vendor (nos)', 'Open Lots'],
+            d.platByVendor.map(v => [v.name, v.atVendor, v.lots])
+          ) : undefined}
+        />
+        <div style={{ padding: '16px 20px' }}>
+          {loading && <div style={G2}>{Array(2).fill(0).map((_, i) => <Pulse key={i} h={140} />)}</div>}
+          {!loading && d && <>
+            <div style={{ ...G3, marginBottom: 12 }}>
+              <KpiCard label="At Vendor (Plating)" value={IN(d.platAtVendorTotal)} sub="nos, right now" accent={C.pink} />
+              <KpiCard label="Vendors With Pending Stock" value={IN(d.platByVendor.length)} accent={C.orange} />
+              <KpiCard label="Sent This Period (pcs)" value={IN(d.platDonut.reduce((s, p) => s + p.qty, 0))} sub={`${d.from} → ${d.to}`} accent={C.blue} />
+            </div>
+            <Box title="At Plating — By Vendor (Real Time)">
+              <MiniTable
+                headers={[{ label: 'Vendor' }, { label: 'With Vendor (nos)', right: true }, { label: 'Open Lots', right: true }]}
+                rows={d.platByVendor.map(v => [
+                  { label: v.name, cond: true, bold: true },
+                  { label: IN(v.atVendor), right: true, bold: true, color: C.pink },
+                  { label: IN(v.lots), right: true, color: 'var(--muted)' },
+                ])}
+                emptyMsg="Nothing currently with any plating vendor."
               />
             </Box>
           </>}

@@ -21,7 +21,7 @@ async function nextLotNo() {
 
 const EMPTY = {
   lot_no: '', send_date: today(), plating_type_id: '', screw_id: '', sent_qty: '',
-  vendor_name: '', vendor_challan_no: '', expected_return_date: '', notes: '',
+  vendor_id: '', vendor_challan_no: '', expected_return_date: '', notes: '',
 }
 
 // Searchable screw combobox — shows only produced screws, filters by typing
@@ -97,7 +97,7 @@ function ScrewCombobox({ screws, value, onChange, hasError, availMap = {} }) {
   )
 }
 
-function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedScrews, platTypes, loading, title, accentColor, ratioMap, availMap }) {
+function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedScrews, platTypes, loading, title, accentColor, ratioMap, availMap, vendors }) {
   const ratio = ratioMap[form.screw_id]
   const kgVal = parseFloat(form.sent_qty)
   const nosPreview = ratio && !isNaN(kgVal) && kgVal > 0 ? Math.round(kgVal * ratio) : null
@@ -173,10 +173,12 @@ function SendForm({ form, setForm, errors, saving, onSubmit, onCancel, producedS
             )}
           </div>
           <div className="form-group">
-            <label>Vendor Name</label>
-            <input value={form.vendor_name}
-              onChange={e => setForm(f => ({ ...f, vendor_name: e.target.value }))}
-              placeholder="e.g. Rajesh Platers" />
+            <label>Vendor</label>
+            <select value={form.vendor_id}
+              onChange={e => setForm(f => ({ ...f, vendor_id: e.target.value }))}>
+              <option value="">— Select vendor —</option>
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+            </select>
           </div>
           <div className="form-group">
             <label>Vendor Challan No</label>
@@ -213,8 +215,11 @@ export default function Plating() {
   const [screws, setScrews]           = useState([])
   const [producedIds, setProducedIds] = useState(new Set())
   const [platTypes, setPlatTypes]     = useState([])
+  const [vendors, setVendors]         = useState([])
   const [ratioMap, setRatioMap]       = useState({}) // screw_id → conversion_ratio_per_kg (nos/kg)
   const [availMap, setAvailMap]       = useState({}) // screw_id → { availNos, availKg } — produced minus already sent to plating
+  const [stageMap, setStageMap]       = useState({}) // screw_id → { godown, atPlating } — where unplated stock currently sits
+  const [vendorStageMap, setVendorStageMap] = useState({}) // vendor_id → { name, atPlating, lots }
   const [loading, setLoading]         = useState(true)
 
   // Create form
@@ -240,17 +245,20 @@ export default function Plating() {
 
   async function load() {
     setLoading(true)
-    const [eRes, sRes, pRes, prodRes, convRes] = await Promise.all([
+    const [eRes, sRes, pRes, prodRes, convRes, openRes, vRes] = await Promise.all([
       supabase.from('plating_entries')
-        .select('*, screw:screw_id(screw_code,screw_name), plating_type:plating_type_id(plating_name)')
+        .select('*, screw:screw_id(screw_code,screw_name), plating_type:plating_type_id(plating_name), vendor:vendor_id(vendor_name)')
         .order('created_at', { ascending: false }),
       supabase.from('output_screw_master').select('id,screw_code,screw_name,rm_wire_id').eq('status', 'Active').order('screw_code'),
       supabase.from('plating_type_master').select('id,plating_name').eq('status', 'Active').order('plating_name'),
       supabase.from('production_entries').select('screw_id,output_nos'),
       supabase.from('conversion_master').select('screw_id,wire_id,conversion_ratio_per_kg'),
+      supabase.from('fg_opening_stock').select('screw_id,quantity_nos,stock_type,direction'),
+      supabase.from('plating_vendor_master').select('id,vendor_name').eq('status', 'Active').order('vendor_name'),
     ])
     setEntries(eRes.data || [])
     setScrews(sRes.data || [])
+    setVendors(vRes.data || [])
     setPlatTypes(pRes.data || [])
     setProducedIds(new Set((prodRes.data || []).map(r => r.screw_id)))
 
@@ -270,18 +278,48 @@ export default function Plating() {
     for (const p of (prodRes.data || [])) {
       producedNos[p.screw_id] = (producedNos[p.screw_id] || 0) + (p.output_nos || 0)
     }
+    // UNPLATED opening stock is unplated stock that predates this app — it
+    // counts toward "produced, not yet sent" same as a real production entry.
+    // PLATED opening stock is excluded — that stock skipped plating entirely
+    // and never sat in the godown/vendor pipeline this page tracks.
+    for (const o of (openRes.data || [])) {
+      if (!o.screw_id || o.stock_type !== 'UNPLATED') continue
+      const signed = o.direction === 'REMOVE' ? -o.quantity_nos : o.quantity_nos
+      producedNos[o.screw_id] = (producedNos[o.screw_id] || 0) + signed
+    }
     const sentNos = {}
+    const receivedNos = {}
     for (const e of (eRes.data || [])) {
       if (!e.screw_id) continue
       const nos = e.sent_qty_nos != null ? e.sent_qty_nos : Math.round(parseFloat(e.sent_qty || 0) * (rm[e.screw_id] || 0))
       sentNos[e.screw_id] = (sentNos[e.screw_id] || 0) + nos
+      receivedNos[e.screw_id] = (receivedNos[e.screw_id] || 0) + (e.received_qty_nos || 0)
     }
     const avail = {}
+    const stage = {}
     for (const sid of new Set([...Object.keys(producedNos), ...Object.keys(sentNos)])) {
       const availNos = Math.max((producedNos[sid] || 0) - (sentNos[sid] || 0), 0)
       avail[sid] = { availNos, availKg: rm[sid] ? +(availNos / rm[sid]).toFixed(2) : null }
+      stage[sid] = {
+        godown:    availNos,
+        atPlating: Math.max((sentNos[sid] || 0) - (receivedNos[sid] || 0), 0),
+      }
     }
     setAvailMap(avail)
+    setStageMap(stage)
+
+    // At-vendor breakdown by vendor — real-time "who currently has how much"
+    const vendorStage = {}
+    for (const e of (eRes.data || [])) {
+      if (!e.vendor_id) continue
+      const sent = e.sent_qty_nos != null ? e.sent_qty_nos : Math.round(parseFloat(e.sent_qty || 0) * (rm[e.screw_id] || 0))
+      const pending = Math.max(sent - (e.received_qty_nos || 0), 0)
+      if (pending <= 0) continue
+      if (!vendorStage[e.vendor_id]) vendorStage[e.vendor_id] = { name: e.vendor?.vendor_name || '—', atPlating: 0, lots: 0 }
+      vendorStage[e.vendor_id].atPlating += pending
+      vendorStage[e.vendor_id].lots += 1
+    }
+    setVendorStageMap(vendorStage)
 
     setLoading(false)
   }
@@ -323,7 +361,7 @@ export default function Plating() {
         screw_id:             form.screw_id,
         sent_qty:             parseFloat(form.sent_qty),
         sent_qty_nos:         ratio ? Math.round(parseFloat(form.sent_qty) * ratio) : null,
-        vendor_name:          form.vendor_name.trim() || null,
+        vendor_id:            form.vendor_id || null,
         vendor_challan_no:    form.vendor_challan_no.trim() || null,
         expected_return_date: form.expected_return_date || null,
         notes:                form.notes.trim() || null,
@@ -355,7 +393,7 @@ export default function Plating() {
       plating_type_id:      entry.plating_type_id || '',
       screw_id:             entry.screw_id || '',
       sent_qty:             entry.sent_qty ?? '',
-      vendor_name:          entry.vendor_name || '',
+      vendor_id:            entry.vendor_id || '',
       vendor_challan_no:    entry.vendor_challan_no || '',
       expected_return_date: entry.expected_return_date || '',
       notes:                entry.notes || '',
@@ -376,7 +414,7 @@ export default function Plating() {
       screw_id:             editForm.screw_id,
       sent_qty:             parseFloat(editForm.sent_qty),
       sent_qty_nos:         ratio ? Math.round(parseFloat(editForm.sent_qty) * ratio) : null,
-      vendor_name:          editForm.vendor_name.trim() || null,
+      vendor_id:            editForm.vendor_id || null,
       vendor_challan_no:    editForm.vendor_challan_no.trim() || null,
       expected_return_date: editForm.expected_return_date || null,
       notes:                editForm.notes.trim() || null,
@@ -432,6 +470,13 @@ export default function Plating() {
   const totalSent = entries.reduce((s, e) => s + (parseFloat(e.sent_qty) || 0), 0)
   const filtered  = filterStatus === 'All' ? entries : entries.filter(e => lotStatus(e).label === filterStatus)
 
+  const stageRows = Object.entries(stageMap)
+    .map(([sid, s]) => ({ sid, name: screws.find(sc => sc.id === sid)?.screw_name || '—', ...s, total: s.godown + s.atPlating }))
+    .filter(r => r.total > 0)
+    .sort((a, b) => b.total - a.total)
+  const totalGodown    = stageRows.reduce((s, r) => s + r.godown, 0)
+  const totalAtPlating = stageRows.reduce((s, r) => s + r.atPlating, 0)
+
   return (
     <div className="main page-enter">
       <div className="sh">
@@ -457,6 +502,74 @@ export default function Plating() {
           <div className="stat-n" style={{ color: 'var(--blue)' }}>{totalSent.toFixed(2)}</div>
           <div className="stat-l">Total Sent (kg)</div>
         </div>
+      </div>
+
+      {/* Stock By Stage — where unplated stock physically is right now */}
+      <div style={{ marginBottom: 24 }}>
+        <div className="sum-section-title">STOCK BY STAGE — WHERE IS MY STOCK</div>
+        <div className="stats" style={{ gridTemplateColumns: 'repeat(2,1fr)', maxWidth: 480, marginBottom: 10 }}>
+          <div className="stat" style={{ borderLeftColor: '#D97706' }}>
+            <div className="stat-n" style={{ color: '#D97706' }}>{totalGodown.toLocaleString()}</div>
+            <div className="stat-l">1. Godown (Ready to Send)</div>
+          </div>
+          <div className="stat" style={{ borderLeftColor: 'var(--accent)' }}>
+            <div className="stat-n" style={{ color: 'var(--accent)' }}>{totalAtPlating.toLocaleString()}</div>
+            <div className="stat-l">2. At Plating (With Vendor)</div>
+          </div>
+        </div>
+        <div className="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Screw</th>
+                <th style={{ textAlign: 'right' }}>1. Godown (Ready to Send)</th>
+                <th style={{ textAlign: 'right' }}>2. At Plating (With Vendor)</th>
+                <th style={{ textAlign: 'right' }}>Total Unplated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stageRows.length === 0 && <tr><td colSpan={4} className="empty">Nothing unplated right now — everything produced has been sent and received.</td></tr>}
+              {stageRows.map(r => (
+                <tr key={r.sid}>
+                  <td style={{ fontSize: 12, fontFamily: 'var(--cond)', fontWeight: 600 }}>{r.name}</td>
+                  <td className="num-cell" style={{ textAlign: 'right', color: r.godown > 0 ? '#D97706' : 'var(--dim)', fontWeight: r.godown > 0 ? 700 : 400 }}>
+                    {r.godown > 0 ? r.godown.toLocaleString() : '—'}
+                  </td>
+                  <td className="num-cell" style={{ textAlign: 'right', color: r.atPlating > 0 ? 'var(--accent)' : 'var(--dim)', fontWeight: r.atPlating > 0 ? 700 : 400 }}>
+                    {r.atPlating > 0 ? r.atPlating.toLocaleString() : '—'}
+                  </td>
+                  <td className="num-cell" style={{ textAlign: 'right', fontWeight: 700 }}>{r.total.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {Object.keys(vendorStageMap).length > 0 && (
+          <>
+            <div className="sum-section-title" style={{ marginTop: 16 }}>AT PLATING — BY VENDOR (RIGHT NOW)</div>
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Vendor</th>
+                    <th style={{ textAlign: 'right' }}>With Vendor (nos)</th>
+                    <th style={{ textAlign: 'right' }}>Open Lots</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.values(vendorStageMap).sort((a, b) => b.atPlating - a.atPlating).map(v => (
+                    <tr key={v.name}>
+                      <td style={{ fontSize: 12, fontFamily: 'var(--cond)', fontWeight: 600 }}>{v.name}</td>
+                      <td className="num-cell" style={{ textAlign: 'right', color: 'var(--accent)', fontWeight: 700 }}>{v.atPlating.toLocaleString()}</td>
+                      <td className="num-cell" style={{ textAlign: 'right', color: 'var(--muted)' }}>{v.lots}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10 }} className="no-print">
@@ -489,6 +602,7 @@ export default function Plating() {
           accentColor="var(--accent)"
           ratioMap={ratioMap}
           availMap={availMap}
+          vendors={vendors}
         />
       )}
 
@@ -505,6 +619,7 @@ export default function Plating() {
           accentColor="var(--blue)"
           ratioMap={ratioMap}
           availMap={availMap}
+          vendors={vendors}
         />
       )}
 
@@ -546,8 +661,8 @@ export default function Plating() {
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}> {e.screw?.screw_name}</span>
                   </td>
                   <td style={{ fontSize: 12 }}>{e.plating_type?.plating_name || '—'}</td>
-                  <td style={{ fontSize: 12, fontWeight: e.vendor_name ? 600 : 400, color: e.vendor_name ? 'var(--text)' : 'var(--dim)' }}>
-                    {e.vendor_name || '—'}
+                  <td style={{ fontSize: 12, fontWeight: (e.vendor?.vendor_name || e.vendor_name) ? 600 : 400, color: (e.vendor?.vendor_name || e.vendor_name) ? 'var(--text)' : 'var(--dim)' }}>
+                    {e.vendor?.vendor_name || e.vendor_name || '—'}
                   </td>
                   <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.vendor_challan_no || '—'}</td>
                   <td style={{ fontSize: 12, color: overdue ? 'var(--red)' : 'var(--muted)', fontWeight: overdue ? 700 : 400 }}>

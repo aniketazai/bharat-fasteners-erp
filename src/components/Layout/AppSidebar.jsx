@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ClipboardList, FileText, Package,
   Cpu, Layers, Truck, Settings2, Cable, Zap,
   ArrowLeftRight, Users, Palette, ChevronLeft, ChevronRight,
-  ChevronDown, ChevronUp, LogOut, User, ShieldCheck, Archive, BookOpen,
+  ChevronDown, ChevronUp, LogOut, User, ShieldCheck, Archive, BookOpen, Target, Factory,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useRole, ROLE_PATHS } from '../../contexts/RoleContext'
@@ -22,6 +22,7 @@ const GROUPS = [
   {
     label: 'OPERATIONS',
     items: [
+      { icon: Target,         label: 'Monthly Target', path: '/monthly-targets' },
       { icon: ClipboardList,  label: 'Orders',       path: '/orders'         },
       { icon: FileText,       label: 'RM Req.',       path: '/rm-requirement' },
       { icon: Package,        label: 'RM Lot',        path: '/rm-lot'         },
@@ -40,6 +41,7 @@ const GROUPS = [
       { icon: ArrowLeftRight, label: 'Conversions',   path: '/masters/conversions'   },
       { icon: Users,          label: 'Customers',     path: '/masters/customers'     },
       { icon: Palette,        label: 'Plating Types', path: '/masters/plating-types' },
+      { icon: Factory,        label: 'Plating Vendors', path: '/masters/plating-vendors' },
     ],
   },
 ]

@@ -7,6 +7,7 @@ import StageNav from './components/Layout/StageNav'
 import AppSidebar from './components/Layout/AppSidebar'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import MonthlyTargets from './pages/MonthlyTargets'
 import Orders from './pages/Orders'
 import RMRequirement from './pages/RMRequirement'
 import RMLot from './pages/RMLot'
@@ -18,6 +19,7 @@ import RMWire from './pages/masters/RMWire'
 import OutputScrews from './pages/masters/OutputScrews'
 import Customers from './pages/masters/Customers'
 import PlatingTypes from './pages/masters/PlatingTypes'
+import PlatingVendors from './pages/masters/PlatingVendors'
 import ConversionMaster from './pages/masters/ConversionMaster'
 import ResetData from './pages/ResetData'
 import FinishedGoods from './pages/FinishedGoods'
@@ -85,6 +87,7 @@ function AppShell() {
           <Route path="/"      element={<HomeRedirect />} />
           <Route path="/login" element={<HomeRedirect />} />
           <Route path="/dashboard"      element={<Guard path="/dashboard"           element={<Dashboard />} />} />
+          <Route path="/monthly-targets" element={<Guard path="/monthly-targets"    element={<MonthlyTargets />} />} />
           <Route path="/orders"         element={<Guard path="/orders"              element={<Orders />} />} />
           <Route path="/rm-requirement" element={<Guard path="/rm-requirement"      element={<RMRequirement />} />} />
           <Route path="/rm-lot"         element={<Guard path="/rm-lot"              element={<RMLot />} />} />
@@ -98,6 +101,7 @@ function AppShell() {
           <Route path="/masters/conversions"   element={<Guard path="/masters/conversions"   element={<ConversionMaster />} />} />
           <Route path="/masters/customers"     element={<Guard path="/masters/customers"     element={<Customers />} />} />
           <Route path="/masters/plating-types" element={<Guard path="/masters/plating-types" element={<PlatingTypes />} />} />
+          <Route path="/masters/plating-vendors" element={<Guard path="/masters/plating-vendors" element={<PlatingVendors />} />} />
           <Route path="/opening-stock" element={<Guard path="/opening-stock" element={<OpeningStock />} />} />
           <Route path="/admin/users" element={<Guard path="/admin/users" element={<AdminUsers />} />} />
           <Route path="/reset" element={<ResetData />} />
