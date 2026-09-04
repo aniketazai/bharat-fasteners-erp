@@ -635,6 +635,7 @@ export default function Orders() {
                         {['Cancelled', 'Completed'].includes(o.status) && (
                           <button className="btn-icon" style={{ fontSize: 10 }} onClick={() => setStatus(o.id, 'Open')}>REOPEN</button>
                         )}
+                        <a className="btn-icon" style={{ fontSize: 10, color: 'var(--accent)' }} href={`/pdir/${o.id}`} target="_blank" rel="noopener noreferrer">PDIR</a>
                         <button className="btn-icon" style={{ fontSize: 10, color: 'var(--red)' }} onClick={() => deleteOrder(o)}>DELETE</button>
                       </div>
                     </td>

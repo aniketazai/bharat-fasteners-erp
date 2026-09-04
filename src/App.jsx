@@ -14,6 +14,7 @@ import RMLot from './pages/RMLot'
 import Production from './pages/Production'
 import Plating from './pages/Plating'
 import Dispatch from './pages/Dispatch'
+import PDIRReport from './pages/PDIRReport'
 import Machines from './pages/masters/Machines'
 import RMWire from './pages/masters/RMWire'
 import OutputScrews from './pages/masters/OutputScrews'
@@ -95,6 +96,7 @@ function AppShell() {
           <Route path="/plating"        element={<Guard path="/plating"             element={<Plating />} />} />
           <Route path="/fg"             element={<Guard path="/fg"                  element={<FinishedGoods />} />} />
           <Route path="/dispatch"       element={<Guard path="/dispatch"            element={<Dispatch />} />} />
+          <Route path="/pdir/:orderId"  element={<Guard path="/dispatch"            element={<PDIRReport />} />} />
           <Route path="/masters/machines"      element={<Guard path="/masters/machines"      element={<Machines />} />} />
           <Route path="/masters/rm-wire"       element={<Guard path="/masters/rm-wire"       element={<RMWire />} />} />
           <Route path="/masters/screws"        element={<Guard path="/masters/screws"        element={<OutputScrews />} />} />

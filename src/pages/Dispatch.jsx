@@ -25,9 +25,9 @@ export default function Dispatch() {
   const [errors, setErrors]       = useState({})
   const [saving, setSaving]       = useState(false)
   const [selOrder, setSelOrder]   = useState(null)
-  const [selItem, setSelItem]     = useState(null)
-  const [platCheck, setPlatCheck] = useState(null)
-  const [platingAck, setAck]      = useState(false)
+  const [rowState, setRowState]   = useState({})   // item_id -> { checked, qty }
+  const [screwPlat, setScrewPlat] = useState({})   // screw_id -> { blocked, available, received, dispatched }
+  const [platLoading, setPlatLoading] = useState(false)
   const [editId, setEditId]       = useState(null)
   const [editOrigQty, setEditOrigQty] = useState(0)
   const [editEntry, setEditEntry] = useState(null)
@@ -78,9 +78,8 @@ export default function Dispatch() {
     setForm({ ...EMPTY, dc_no: no, dispatch_date: today() })
     setErrors({})
     setSelOrder(null)
-    setSelItem(null)
-    setPlatCheck(null)
-    setAck(false)
+    setRowState({})
+    setScrewPlat({})
     setEditId(null)
     setEditEntry(null)
     setShowForm(true)
@@ -100,9 +99,8 @@ export default function Dispatch() {
     })
     setErrors({})
     setSelOrder(null)
-    setSelItem(null)
-    setPlatCheck(null)
-    setAck(false)
+    setRowState({})
+    setScrewPlat({})
     setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -142,156 +140,228 @@ export default function Dispatch() {
     load()
   }
 
-  function handleOrderSelect(order_id) {
+  async function checkPlatingForScrew(screw_id) {
+    const [platRes, orderItemRes, openRes] = await Promise.all([
+      supabase.from('plating_entries')
+        .select('received_qty_nos')
+        .eq('screw_id', screw_id)
+        .not('received_qty_nos', 'is', null),
+      supabase.from('order_items')
+        .select('dispatched_qty')
+        .eq('screw_id', screw_id),
+      supabase.from('fg_opening_stock')
+        .select('quantity_nos, direction')
+        .eq('screw_id', screw_id)
+        .eq('stock_type', 'PLATED'),
+    ])
+    const platReceived    = (platRes.data  || []).reduce((s, p) => s + (p.received_qty_nos  || 0), 0)
+    const openingPlated   = (openRes.data  || []).reduce((s, o) => s + (o.direction === 'REMOVE' ? -(o.quantity_nos || 0) : (o.quantity_nos || 0)), 0)
+    const totalReceived   = platReceived + openingPlated
+    const totalDispatched = (orderItemRes.data || []).reduce((s, i) => s + (i.dispatched_qty || 0), 0)
+    const available       = Math.max(0, totalReceived - totalDispatched)
+    return { blocked: available <= 0, available, received: totalReceived, dispatched: totalDispatched }
+  }
+
+  async function handleOrderSelect(order_id) {
     const ord = orders.find(o => o.id === order_id)
     setSelOrder(ord || null)
-    setSelItem(null)
-    setPlatCheck(null)
-    setAck(false)
     setForm(f => ({ ...f, order_id, item_id: '', quantity_nos: '' }))
-  }
+    setRowState({})
+    setScrewPlat({})
+    setErrors({})
 
-  async function handleItemSelect(item_id) {
-    const item = (itemsByOrder[form.order_id] || []).find(i => i.id === item_id)
-    setSelItem(item || null)
-    setAck(false)
-    setPlatCheck(null)
+    const items = itemsByOrder[order_id] || []
+    if (!items.length) return
+    setPlatLoading(true)
 
-    const remaining = item ? Math.max(item.order_qty - item.dispatched_qty, 0) : 0
-    setForm(f => ({ ...f, item_id, quantity_nos: remaining || '' }))
+    const uniqueScrewIds = [...new Set(items.map(i => i.screw_id).filter(Boolean))]
+    const results = await Promise.all(uniqueScrewIds.map(async screw_id => [screw_id, await checkPlatingForScrew(screw_id)]))
+    const platMap = Object.fromEntries(results)
+    setScrewPlat(platMap)
 
-    if (item?.screw_id) {
-      const [platRes, orderItemRes, openRes] = await Promise.all([
-        supabase.from('plating_entries')
-          .select('received_qty_nos')
-          .eq('screw_id', item.screw_id)
-          .not('received_qty_nos', 'is', null),
-        supabase.from('order_items')
-          .select('dispatched_qty')
-          .eq('screw_id', item.screw_id),
-        supabase.from('fg_opening_stock')
-          .select('quantity_nos, direction')
-          .eq('screw_id', item.screw_id)
-          .eq('stock_type', 'PLATED'),
-      ])
-      const platReceived    = (platRes.data  || []).reduce((s, p) => s + (p.received_qty_nos  || 0), 0)
-      const openingPlated   = (openRes.data  || []).reduce((s, o) => s + (o.direction === 'REMOVE' ? -(o.quantity_nos || 0) : (o.quantity_nos || 0)), 0)
-      const totalReceived   = platReceived + openingPlated
-      const totalDispatched = (orderItemRes.data || []).reduce((s, i) => s + (i.dispatched_qty || 0), 0)
-      const available       = Math.max(0, totalReceived - totalDispatched)
-      setPlatCheck({ blocked: available <= 0, available, received: totalReceived, dispatched: totalDispatched })
-
-      if (available > 0) {
-        const autoQty = Math.min(available, remaining)
-        setForm(f => ({ ...f, quantity_nos: autoQty > 0 ? String(autoQty) : '' }))
-      }
+    const rs = {}
+    for (const item of items) {
+      const remaining = Math.max(item.order_qty - item.dispatched_qty, 0)
+      const plat = item.screw_id ? platMap[item.screw_id] : null
+      const cap = plat ? Math.min(remaining, plat.available) : remaining
+      const blocked = plat ? plat.blocked : false
+      rs[item.id] = { checked: !blocked && cap > 0, qty: cap > 0 ? String(cap) : '' }
     }
+    setRowState(rs)
+    setPlatLoading(false)
   }
 
-  function validate(f) {
+  function toggleRow(item_id, checked) {
+    setRowState(rs => ({ ...rs, [item_id]: { ...rs[item_id], checked } }))
+  }
+
+  function setRowQty(item_id, qty) {
+    setRowState(rs => ({ ...rs, [item_id]: { ...rs[item_id], qty } }))
+  }
+
+  function selectAllRows(checked) {
+    setRowState(rs => {
+      const next = { ...rs }
+      for (const item of avItems) {
+        const plat = item.screw_id ? screwPlat[item.screw_id] : null
+        if (plat?.blocked) continue
+        next[item.id] = { ...next[item.id], checked }
+      }
+      return next
+    })
+  }
+
+  function validateEdit(f) {
     const e = {}
-    if (!f.dc_no.trim())  e.dc_no     = 'DC number required.'
-    if (!editId && !f.order_id)  e.order_id  = 'Select an order.'
-    if (!editId && !f.item_id)   e.item_id   = 'Select an order item.'
+    if (!f.dc_no.trim()) e.dc_no = 'DC number required.'
     const qty = parseInt(f.quantity_nos)
     if (!f.quantity_nos || isNaN(qty) || qty <= 0) e.quantity_nos = 'Enter valid quantity.'
-    else if (!editId && platCheck && qty > platCheck.available) e.quantity_nos = `Exceeds plating stock. Available: ${platCheck.available.toLocaleString()} nos.`
     return e
   }
 
-  async function handleAdd(ev) {
-    ev.preventDefault()
-    if (!editId && platCheck?.blocked) return
+  function validateBatch() {
+    const e = {}
+    if (!form.dc_no.trim()) e.dc_no = 'DC number required.'
+    if (!form.order_id)     e.order_id = 'Select an order.'
 
-    const errs = validate(form)
+    const selected = avItems.filter(i => rowState[i.id]?.checked)
+    if (!selected.length) e.rows = 'Select at least one item to dispatch.'
+
+    const screwTotals = {}
+    for (const item of selected) {
+      const row = rowState[item.id] || {}
+      const qty = parseInt(row.qty)
+      const remaining = Math.max(item.order_qty - item.dispatched_qty, 0)
+      if (!row.qty || isNaN(qty) || qty <= 0) { e[`row_${item.id}`] = 'Enter valid qty.'; continue }
+      if (qty > remaining) { e[`row_${item.id}`] = `Exceeds remaining (${remaining.toLocaleString()}).`; continue }
+      if (item.screw_id) screwTotals[item.screw_id] = (screwTotals[item.screw_id] || 0) + qty
+    }
+    for (const [screwId, total] of Object.entries(screwTotals)) {
+      const plat = screwPlat[screwId]
+      if (plat && total > plat.available) {
+        e.rows = `Total quantity for one of the screws exceeds available plating stock (${plat.available.toLocaleString()}).`
+      }
+    }
+    return e
+  }
+
+  async function updateOrderItemsAndOrderStatus(order_id, dispatchedByItem) {
+    for (const [itemId, newDisp] of Object.entries(dispatchedByItem)) {
+      const item = avItems.find(i => i.id === itemId)
+      const newStatus = item && newDisp >= item.order_qty ? 'Completed' : 'In Progress'
+      await supabase.from('order_items').update({ dispatched_qty: newDisp, status: newStatus }).eq('id', itemId)
+    }
+
+    const { data: allItems } = await supabase.from('order_items')
+      .select('id, order_qty, dispatched_qty')
+      .eq('order_id', order_id)
+    if (allItems) {
+      const updItems   = allItems.map(i => dispatchedByItem[i.id] !== undefined ? { ...i, dispatched_qty: dispatchedByItem[i.id] } : i)
+      const allDone    = updItems.every(i => (i.dispatched_qty || 0) >= i.order_qty)
+      const anyStarted = updItems.some(i => (i.dispatched_qty || 0) > 0)
+      const newOrderStatus = allDone ? 'Completed' : anyStarted ? 'Partial' : 'Open'
+      await supabase.from('orders').update({ status: newOrderStatus }).eq('id', order_id)
+    }
+  }
+
+  async function handleEditSave(ev) {
+    ev.preventDefault()
+    const errs = validateEdit(form)
     if (Object.keys(errs).length) { setErrors(errs); return }
     setSaving(true)
 
     const qty = parseInt(form.quantity_nos)
 
-    if (editId) {
-      await supabase.from('dispatch_entries').update({
-        dc_no:         form.dc_no.trim().toUpperCase(),
-        dispatch_date: form.dispatch_date || today(),
-        quantity_nos:  qty,
-        notes:         form.notes.trim() || null,
-      }).eq('id', editId)
+    await supabase.from('dispatch_entries').update({
+      dc_no:         form.dc_no.trim().toUpperCase(),
+      dispatch_date: form.dispatch_date || today(),
+      quantity_nos:  qty,
+      notes:         form.notes.trim() || null,
+    }).eq('id', editId)
 
-      const diff = qty - editOrigQty
-      if (diff !== 0) {
-        const { data: itemData } = await supabase.from('order_items')
-          .select('order_qty, dispatched_qty')
-          .eq('id', form.item_id)
-          .single()
-
-        if (itemData) {
-          const newDisp   = Math.max(0, (itemData.dispatched_qty || 0) + diff)
-          const newStatus = newDisp >= itemData.order_qty ? 'Completed' : newDisp > 0 ? 'In Progress' : 'Open'
-          await supabase.from('order_items').update({ dispatched_qty: newDisp, status: newStatus }).eq('id', form.item_id)
-
-          const { data: allItems } = await supabase.from('order_items')
-            .select('id, order_qty, dispatched_qty')
-            .eq('order_id', form.order_id)
-          if (allItems) {
-            const updItems   = allItems.map(i => i.id === form.item_id ? { ...i, dispatched_qty: newDisp } : i)
-            const allDone    = updItems.every(i => (i.dispatched_qty || 0) >= i.order_qty)
-            const anyStarted = updItems.some(i => (i.dispatched_qty || 0) > 0)
-            const newOrderStatus = allDone ? 'Completed' : anyStarted ? 'Partial' : 'Open'
-            await supabase.from('orders').update({ status: newOrderStatus }).eq('id', form.order_id)
-          }
-        }
-      }
-
-      setSaving(false)
-      setEditId(null)
-      setEditEntry(null)
-      setShowForm(false)
-      load()
-      return
-    }
-
-    // Insert new
-    const { error } = await supabase.from('dispatch_entries').insert({
-      dc_no:          form.dc_no.trim().toUpperCase(),
-      dispatch_date:  form.dispatch_date || today(),
-      order_id:       form.order_id,
-      order_item_id:  form.item_id,
-      quantity_nos:   qty,
-      notes:          form.notes.trim() || null,
-      created_by:     user?.id,
-    })
-
-    if (!error && selItem) {
-      const newDisp   = (selItem.dispatched_qty || 0) + qty
-      const newStatus = newDisp >= selItem.order_qty ? 'Completed' : 'In Progress'
-
-      await supabase.from('order_items').update({
-        dispatched_qty: newDisp,
-        status:         newStatus,
-      }).eq('id', form.item_id)
-
-      const { data: allOrdItems } = await supabase.from('order_items')
+    const diff = qty - editOrigQty
+    if (diff !== 0) {
+      const { data: itemData } = await supabase.from('order_items')
         .select('order_qty, dispatched_qty')
-        .eq('order_id', form.order_id)
+        .eq('id', form.item_id)
+        .single()
 
-      if (allOrdItems) {
-        const allDone    = allOrdItems.every(i => (i.id === form.item_id ? newDisp : i.dispatched_qty) >= i.order_qty)
-        const anyStarted = allOrdItems.some(i =>  (i.id === form.item_id ? newDisp : i.dispatched_qty) > 0)
-        const newOrderStatus = allDone ? 'Completed' : anyStarted ? 'Partial' : 'Open'
-        await supabase.from('orders').update({ status: newOrderStatus }).eq('id', form.order_id)
+      if (itemData) {
+        const newDisp   = Math.max(0, (itemData.dispatched_qty || 0) + diff)
+        const newStatus = newDisp >= itemData.order_qty ? 'Completed' : newDisp > 0 ? 'In Progress' : 'Open'
+        await supabase.from('order_items').update({ dispatched_qty: newDisp, status: newStatus }).eq('id', form.item_id)
+
+        const { data: allItems } = await supabase.from('order_items')
+          .select('id, order_qty, dispatched_qty')
+          .eq('order_id', form.order_id)
+        if (allItems) {
+          const updItems   = allItems.map(i => i.id === form.item_id ? { ...i, dispatched_qty: newDisp } : i)
+          const allDone    = updItems.every(i => (i.dispatched_qty || 0) >= i.order_qty)
+          const anyStarted = updItems.some(i => (i.dispatched_qty || 0) > 0)
+          const newOrderStatus = allDone ? 'Completed' : anyStarted ? 'Partial' : 'Open'
+          await supabase.from('orders').update({ status: newOrderStatus }).eq('id', form.order_id)
+        }
       }
     }
 
     setSaving(false)
-    if (error) { setErrors({ dc_no: error.message }); return }
+    setEditId(null)
+    setEditEntry(null)
     setShowForm(false)
     load()
+  }
+
+  async function handleBatchSave(ev) {
+    ev.preventDefault()
+    const errs = validateBatch()
+    if (Object.keys(errs).length) { setErrors(errs); return }
+    setSaving(true)
+
+    const selected = avItems.filter(i => rowState[i.id]?.checked)
+    const dc_no          = form.dc_no.trim().toUpperCase()
+    const dispatch_date  = form.dispatch_date || today()
+    const notes          = form.notes.trim() || null
+
+    const inserts = selected.map(item => ({
+      dc_no,
+      dispatch_date,
+      order_id:      form.order_id,
+      order_item_id: item.id,
+      quantity_nos:  parseInt(rowState[item.id].qty),
+      notes,
+      created_by:    user?.id,
+    }))
+
+    const { error } = await supabase.from('dispatch_entries').insert(inserts)
+    if (error) { setSaving(false); setErrors({ dc_no: error.message }); return }
+
+    const dispatchedByItem = {}
+    for (const item of selected) {
+      dispatchedByItem[item.id] = (item.dispatched_qty || 0) + parseInt(rowState[item.id].qty)
+    }
+    await updateOrderItemsAndOrderStatus(form.order_id, dispatchedByItem)
+
+    setSaving(false)
+    setShowForm(false)
+    load()
+  }
+
+  function closeForm() {
+    setShowForm(false)
+    setErrors({})
+    setSelOrder(null)
+    setRowState({})
+    setScrewPlat({})
+    setEditId(null)
+    setEditEntry(null)
   }
 
   const totalDispatched = entries.reduce((s, e) => s + (e.quantity_nos || 0), 0)
   const pendingOrders   = orders.length
 
   const avItems = form.order_id ? (itemsByOrder[form.order_id] || []) : []
+  const selectedCount = avItems.filter(i => rowState[i.id]?.checked).length
+  const selectedTotal = avItems.reduce((s, i) => s + (rowState[i.id]?.checked ? (parseInt(rowState[i.id].qty) || 0) : 0), 0)
 
   const btnSm = { fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: 'var(--cond)', fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)' }
 
@@ -327,7 +397,7 @@ export default function Dispatch() {
       {showForm && (
         <div className="form-card">
           <div className="form-title">{editId ? 'EDIT DELIVERY CHALLAN' : 'NEW DELIVERY CHALLAN'}</div>
-          <form onSubmit={handleAdd}>
+          <form onSubmit={editId ? handleEditSave : handleBatchSave}>
             <div className="form-grid">
               <div className="form-group">
                 <label>DC No *</label>
@@ -342,7 +412,6 @@ export default function Dispatch() {
               </div>
 
               {editId ? (
-                /* Read-only order/item in edit mode */
                 <>
                   <div className="form-group">
                     <label>Order</label>
@@ -354,9 +423,23 @@ export default function Dispatch() {
                     <input readOnly value={editEntry?.item?.screw?.screw_name || '—'}
                       style={{ background: 'var(--bg3)', color: 'var(--muted)', cursor: 'not-allowed' }} />
                   </div>
+                  <div className="form-group">
+                    <label>Quantity (nos) *</label>
+                    <input type="number" min="1" className={errors.quantity_nos ? 'error' : ''} value={form.quantity_nos}
+                      onChange={e => setForm(f => ({ ...f, quantity_nos: e.target.value }))} placeholder="Quantity to dispatch" />
+                    {errors.quantity_nos && <span className="field-error">{errors.quantity_nos}</span>}
+                    {editOrigQty > 0 && (
+                      <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, display: 'block' }}>
+                        Original: {editOrigQty.toLocaleString()} nos
+                      </span>
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label>Notes</label>
+                    <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" />
+                  </div>
                 </>
               ) : (
-                /* Normal order/item selects for new dispatch */
                 <>
                   <div className="form-group">
                     <label>Order *</label>
@@ -370,86 +453,94 @@ export default function Dispatch() {
                     {errors.order_id && <span className="field-error">{errors.order_id}</span>}
                   </div>
                   <div className="form-group">
-                    <label>Order Item *</label>
-                    <select className={errors.item_id ? 'error' : ''} value={form.item_id}
-                      onChange={e => handleItemSelect(e.target.value)}
-                      disabled={!form.order_id || avItems.length === 0}>
-                      <option value="">— Select item —</option>
-                      {avItems.map(i => {
-                        const rem = Math.max(i.order_qty - i.dispatched_qty, 0)
-                        return (
-                          <option key={i.id} value={i.id}>
-                            {i.screw?.screw_name} — {rem.toLocaleString()} remaining
-                          </option>
-                        )
-                      })}
-                    </select>
-                    {errors.item_id && <span className="field-error">{errors.item_id}</span>}
-                    {form.order_id && avItems.length === 0 && (
-                      <span style={{ fontSize: 11, color: 'var(--green)', marginTop: 2, display: 'block' }}>
-                        All items for this order are completed.
-                      </span>
-                    )}
+                    <label>Notes</label>
+                    <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional — applies to all selected items" />
                   </div>
                 </>
               )}
-
-              <div className="form-group">
-                <label>Quantity (nos) *</label>
-                <input type="number" min="1" className={errors.quantity_nos ? 'error' : ''} value={form.quantity_nos}
-                  onChange={e => setForm(f => ({ ...f, quantity_nos: e.target.value }))} placeholder="Quantity to dispatch" />
-                {errors.quantity_nos && <span className="field-error">{errors.quantity_nos}</span>}
-                {editId && editOrigQty > 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, display: 'block' }}>
-                    Original: {editOrigQty.toLocaleString()} nos
-                  </span>
-                )}
-              </div>
-              <div className="form-group">
-                <label>Notes</label>
-                <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" />
-              </div>
             </div>
 
-            {/* Plating stock check (new dispatch only) */}
-            {!editId && platCheck && (
-              <div style={{
-                marginTop: 10, borderRadius: 7, padding: '12px 14px',
-                background: platCheck.blocked ? '#FEE2E2' : '#F0FDF4',
-                border: `1px solid ${platCheck.blocked ? '#FCA5A5' : '#86EFAC'}`,
-              }}>
-                <div style={{ fontFamily: 'var(--cond)', fontWeight: 700, fontSize: 13, marginBottom: 6, color: platCheck.blocked ? '#DC2626' : '#15803D' }}>
-                  {platCheck.blocked ? '⛔ DISPATCH BLOCKED — No Plating Stock Available' : '✓ Plating Stock Available'}
+            {!editId && form.order_id && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+                  <label style={{ margin: 0 }}>
+                    Order Items *
+                    {selOrder && <span style={{ fontWeight: 400, color: 'var(--muted)', marginLeft: 8, fontSize: 12 }}>{selOrder.customer?.customer_name}</span>}
+                  </label>
+                  {avItems.length > 0 && !platLoading && (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                        {selectedCount} selected · {selectedTotal.toLocaleString()} nos
+                      </span>
+                      <button type="button" style={btnSm} onClick={() => selectAllRows(true)}>Select All</button>
+                      <button type="button" style={btnSm} onClick={() => selectAllRows(false)}>Clear</button>
+                    </div>
+                  )}
                 </div>
-                <div style={{ display: 'flex', gap: 20, fontSize: 12, color: platCheck.blocked ? '#7F1D1D' : '#166534', flexWrap: 'wrap' }}>
-                  <span>Received from plating: <strong>{platCheck.received.toLocaleString()}</strong></span>
-                  <span>Already dispatched: <strong>{platCheck.dispatched.toLocaleString()}</strong></span>
-                  <span>Available to dispatch: <strong>{platCheck.available.toLocaleString()}</strong></span>
-                </div>
-                {platCheck.blocked && (
-                  <div style={{ fontSize: 11, color: '#991B1B', marginTop: 6 }}>
-                    Receive plating stock before dispatching this item.
+
+                {platLoading && <div className="empty" style={{ padding: 10 }}>Checking plating stock…</div>}
+
+                {!platLoading && avItems.length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--green)' }}>All items for this order are completed.</div>
+                )}
+
+                {!platLoading && avItems.length > 0 && (
+                  <div className="tbl-wrap" style={{ marginTop: 4 }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 30 }}></th>
+                          <th>Screw</th>
+                          <th style={{ textAlign: 'right' }}>Order Qty</th>
+                          <th style={{ textAlign: 'right' }}>Dispatched</th>
+                          <th style={{ textAlign: 'right' }}>Remaining</th>
+                          <th style={{ textAlign: 'right' }}>Plating Avail.</th>
+                          <th style={{ width: 140, textAlign: 'right' }}>Qty to Dispatch</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {avItems.map(item => {
+                          const remaining = Math.max(item.order_qty - item.dispatched_qty, 0)
+                          const plat = item.screw_id ? screwPlat[item.screw_id] : null
+                          const blocked = plat ? plat.blocked : false
+                          const row = rowState[item.id] || { checked: false, qty: '' }
+                          const rowErr = errors[`row_${item.id}`]
+                          return (
+                            <tr key={item.id} style={blocked ? { opacity: 0.55 } : undefined}>
+                              <td>
+                                <input type="checkbox" checked={!!row.checked} disabled={blocked}
+                                  onChange={e => toggleRow(item.id, e.target.checked)} />
+                              </td>
+                              <td style={{ fontFamily: 'var(--cond)', fontWeight: 600, fontSize: 12 }}>
+                                {item.screw?.screw_name}
+                                {blocked && <div style={{ fontSize: 10, color: '#DC2626' }}>No plating stock</div>}
+                              </td>
+                              <td className="num-cell" style={{ textAlign: 'right' }}>{item.order_qty?.toLocaleString()}</td>
+                              <td className="num-cell" style={{ textAlign: 'right' }}>{(item.dispatched_qty || 0).toLocaleString()}</td>
+                              <td className="num-cell" style={{ textAlign: 'right' }}>{remaining.toLocaleString()}</td>
+                              <td className="num-cell" style={{ textAlign: 'right' }}>{plat ? plat.available.toLocaleString() : '—'}</td>
+                              <td>
+                                <input type="number" min="1" value={row.qty} disabled={blocked || !row.checked}
+                                  onChange={e => setRowQty(item.id, e.target.value)}
+                                  style={{ width: '100%', textAlign: 'right' }} />
+                                {rowErr && <span className="field-error" style={{ fontSize: 10, display: 'block' }}>{rowErr}</span>}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
-              </div>
-            )}
-
-            {!editId && selItem && (
-              <div style={{ background: 'var(--accentbg)', border: '1px solid var(--accentbr)', borderRadius: 6, padding: '10px 14px', marginTop: 10, display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
-                <span><span style={{ color: 'var(--muted)' }}>Customer: </span><strong>{selOrder?.customer?.customer_name}</strong></span>
-                <span><span style={{ color: 'var(--muted)' }}>Screw: </span><strong>{selItem.screw?.screw_name}</strong></span>
-                <span><span style={{ color: 'var(--muted)' }}>Order Qty: </span><strong>{selItem.order_qty?.toLocaleString()}</strong></span>
-                <span><span style={{ color: 'var(--muted)' }}>Already Dispatched: </span><strong>{(selItem.dispatched_qty || 0).toLocaleString()}</strong></span>
-                <span><span style={{ color: 'var(--muted)' }}>Remaining: </span><strong style={{ color: 'var(--accent)' }}>{Math.max((selItem.order_qty || 0) - (selItem.dispatched_qty || 0), 0).toLocaleString()}</strong></span>
+                {errors.rows && <span className="field-error" style={{ display: 'block', marginTop: 6 }}>{errors.rows}</span>}
               </div>
             )}
 
             <div className="form-actions">
-              <button className="btn-add" type="submit" disabled={saving || (!editId && platCheck?.blocked)}>
-                {saving ? 'SAVING…' : editId ? 'SAVE CHANGES' : 'CONFIRM DISPATCH'}
+              <button className="btn-add" type="submit" disabled={saving || platLoading}>
+                {saving ? 'SAVING…' : editId ? 'SAVE CHANGES' : `CONFIRM DISPATCH${selectedCount ? ` (${selectedCount})` : ''}`}
               </button>
-              <button className="btn-clear" type="button"
-                onClick={() => { setShowForm(false); setErrors({}); setSelOrder(null); setSelItem(null); setPlatCheck(null); setEditId(null); setEditEntry(null) }}>
+              <button className="btn-clear" type="button" onClick={closeForm}>
                 CANCEL
               </button>
             </div>
@@ -469,7 +560,7 @@ export default function Dispatch() {
               <th>Screw</th>
               <th style={{ textAlign: 'right' }}>Qty Dispatched</th>
               <th>Notes</th>
-              <th className="no-print" style={{ width: 90 }}>Actions</th>
+              <th className="no-print" style={{ width: 140 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -488,6 +579,10 @@ export default function Dispatch() {
                 <td className="num-cell" style={{ textAlign: 'right', color: 'var(--green)' }}>{(e.quantity_nos || 0).toLocaleString()}</td>
                 <td style={{ fontSize: 12, color: 'var(--muted)' }}>{e.notes || '—'}</td>
                 <td className="no-print" style={{ whiteSpace: 'nowrap' }}>
+                  <a href={`/pdir/${e.order_id}?dc=${e.id}`} target="_blank" rel="noopener noreferrer"
+                    style={{ ...btnSm, background: 'var(--accentbg)', color: 'var(--accent)', border: '1px solid var(--accentbr)', marginRight: 4, textDecoration: 'none', display: 'inline-block' }}>
+                    PDIR
+                  </a>
                   <button onClick={() => openEdit(e)}
                     style={{ ...btnSm, background: 'var(--bg2)', color: 'var(--text)', marginRight: 4 }}>
                     Edit
